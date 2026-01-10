@@ -1,0 +1,59 @@
+.PHONY: help install install-dev test test-cov format lint type-check clean build upload docs dev check
+
+help:
+	@echo "JWTService - Makefile (Windows)"
+	@echo ""
+	@echo "Available commands:"
+	@echo "  make -f Makefile.windows install      - Sync dependencies"
+	@echo "  make -f Makefile.windows install-dev  - Sync dev dependencies"
+	@echo "  make -f Makefile.windows test         - Run tests"
+	@echo "  make -f Makefile.windows test-cov     - Run tests with coverage"
+	@echo "  make -f Makefile.windows format       - Format code with black and isort"
+	@echo "  make -f Makefile.windows lint         - Lint code with flake8"
+	@echo "  make -f Makefile.windows type-check   - Type check with mypy"
+	@echo "  make -f Makefile.windows clean        - Remove build artifacts"
+	@echo "  make -f Makefile.windows build        - Build package distribution"
+	@echo "  make -f Makefile.windows upload       - Upload to PyPI (requires credentials)"
+	@echo "  make -f Makefile.windows docs         - Documentation info"
+
+install:
+	uv sync
+
+install-dev:
+	uv sync --extra dev
+
+test:
+	uv run pytest -v
+
+test-cov:
+	uv run pytest -v --cov=jwtservice --cov-report=term-missing --cov-report=html
+
+format:
+	uv run black src/ tests/ examples/
+	uv run isort src/ tests/ examples/
+
+lint:
+	uv run flake8 src/ tests/ --max-line-length=100 --extend-ignore=E203,W503
+
+type-check:
+	uv run mypy src/
+
+clean:
+	powershell -NoProfile -Command "$$paths = @('build','dist','.pytest_cache','.mypy_cache','htmlcov','.coverage'); $$paths += (Get-ChildItem -Force -Filter '*.egg-info' -ErrorAction SilentlyContinue | ForEach-Object { $$_.FullName }); foreach ($$p in $$paths) { if (Test-Path $$p) { Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $$p } }"
+	powershell -NoProfile -Command "Get-ChildItem -Recurse -Directory -Filter __pycache__ -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue"
+	powershell -NoProfile -Command "Get-ChildItem -Recurse -File -Filter *.pyc -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue"
+
+build: clean
+	uv build
+
+upload: build
+	uv publish
+
+docs:
+	@echo "Documentation is in README.md"
+	@echo "For more details, consult the docs folder if available"
+
+dev: install-dev
+
+check: format lint type-check test-cov
+	@echo "All checks passed"
