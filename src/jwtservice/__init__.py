@@ -1,7 +1,8 @@
 """Core package for JWT token generation and validation."""
+
 from jwtservice.core import (
-    JWTService,
     JWT_action,
+    JWTService,
     TokenConfig,
     TokenCreationError,
     TokenVerificationResult,

@@ -4,8 +4,8 @@ import jwt
 import pytest
 
 from jwtservice import (
-    JWTService,
     JWT_action,
+    JWTService,
     TokenConfig,
     TokenCreationError,
     load_token_config_from_dict,

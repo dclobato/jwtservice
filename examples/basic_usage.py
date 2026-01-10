@@ -1,6 +1,6 @@
 import logging
 
-from jwtservice import JWTService, JWT_action, load_token_config_from_dict
+from jwtservice import JWT_action, JWTService, load_token_config_from_dict
 
 
 def main() -> None:

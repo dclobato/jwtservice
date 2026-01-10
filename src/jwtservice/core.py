@@ -8,11 +8,12 @@ Classes principais:
     - JWT_action: Enum com tipos de ações de tokens
     - TokenVerificationResult: Dataclass com resultado de verificação de token
 """
-from dataclasses import dataclass
-from enum import Enum
-import time
+
 import json
 import logging
+import time
+from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Dict, Optional, Type
 
 import jwt
@@ -66,7 +67,6 @@ class JWTService:
         self._action_enum = action_enum
 
         logger.debug("JWTService inicializado com algoritmo: %s", config.algorithm)
-
 
     def _ensure_jsonable(self, data: Any) -> Any:
         """Validate that data can be JSON-serialized without transforming it."""
@@ -134,18 +134,21 @@ class JWTService:
                 algorithm=self._config.algorithm,
             )
         except (TypeError, ValueError, jwt.InvalidKeyError) as e:
-            self._logger.exception("Falha ao gerar JWT (encode). action=%s sub=%s", action.name, sub_str)
+            self._logger.exception(
+                "Falha ao gerar JWT (encode). action=%s sub=%s", action.name, sub_str
+            )
             raise TokenCreationError("Falha ao gerar token") from e
         except Exception as e:
             # Última barreira. Evita 500 “misterioso” sem log.
-            self._logger.exception("Falha inesperada ao gerar JWT. action=%s sub=%s", action.name, sub_str)
+            self._logger.exception(
+                "Falha inesperada ao gerar JWT. action=%s sub=%s", action.name, sub_str
+            )
             raise TokenCreationError("Falha inesperada ao gerar token") from e
 
         if isinstance(token, bytes):
             token = token.decode("utf-8")
 
         return token
-
 
     def validar(self, token: str) -> TokenVerificationResult:
         """Validate a JWT token and return a structured result."""
