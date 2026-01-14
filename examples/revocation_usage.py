@@ -34,14 +34,14 @@ def run_in_memory_example() -> None:
 
 def run_sqlite_example() -> None:
     print("=== SQLite revocation store ===")
-    store = SQLiteRevocationStore("revocations.db")
-    service = build_service(store)
+    with SQLiteRevocationStore("revocations.db") as store:
+        service = build_service(store)
 
-    token = service.criar(sub="user@example.com")
-    print("Before revoke:", service.validar(token).status)
+        token = service.criar(sub="user@example.com")
+        print("Before revoke:", service.validar(token).status)
 
-    service.revogar(token, reason="incident")
-    print("After revoke:", service.validar(token).status)
+        service.revogar(token, reason="incident")
+        print("After revoke:", service.validar(token).status)
 
 
 if __name__ == "__main__":

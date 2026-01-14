@@ -305,7 +305,6 @@ class JWTService:
     def revogar(
         self,
         token: str,
-        audience: Optional[Union[str, List[str]]] = None,
         reason: Optional[str] = None,
     ) -> bool:
         """Revoga um token JWT armazenando seu jti com TTL."""
