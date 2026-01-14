@@ -41,5 +41,5 @@
 - Ensure formatting, linting, type checks, and tests pass before opening a PR.
 
 ## Configuration Tips
-- Required settings: `SECRET_KEY` and `JWT_ALGORITHM`.
+- Required settings: `SECRET_KEY`.
 - Only HS256 is supported by default; changes require updates in `TokenConfig`.

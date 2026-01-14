@@ -1,10 +1,12 @@
 """Core package for JWT token generation and validation."""
 
 from jwtservice.core import (
-    JWT_action,
+    JWTAction,
     JWTService,
+    JWTServiceError,
     TokenConfig,
     TokenCreationError,
+    TokenValidationError,
     TokenVerificationResult,
     load_token_config_from_dict,
 )
@@ -12,9 +14,11 @@ from jwtservice.core import (
 __all__ = [
     "__version__",
     "JWTService",
-    "JWT_action",
+    "JWTAction",
+    "JWTServiceError",
     "TokenConfig",
     "TokenCreationError",
+    "TokenValidationError",
     "TokenVerificationResult",
     "load_token_config_from_dict",
 ]

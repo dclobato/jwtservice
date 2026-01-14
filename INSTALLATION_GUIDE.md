@@ -76,12 +76,13 @@ Create `test_local.py`:
 ```python
 import logging
 
-from jwtservice import JWTService, JWT_action, load_token_config_from_dict
+from jwtservice import JWTService, JWTAction, load_token_config_from_dict
 
 config = load_token_config_from_dict(
     {
-        "SECRET_KEY": "minha-chave-super-secreta",
-        "JWT_ALGORITHM": "HS256",
+        "SECRET_KEY": "my-super-secret-key",
+        "JWTSERVICE_ALGORITHM": "HS256",
+        "JWTSERVICE_ISSUER": "my-app",
     }
 )
 
@@ -89,10 +90,10 @@ logger = logging.getLogger("jwt")
 service = JWTService(config=config, logger=logger)
 
 token = service.criar(
-    action=JWT_action.VALIDAR_EMAIL,
-    sub="usuario@example.com",
+    action=JWTAction.VALIDAR_EMAIL,
+    sub="user@example.com",
     expires_in=600,
-    extra_data={"flow": "cadastro"},
+    extra_data={"flow": "signup"},
 )
 
 print(token)

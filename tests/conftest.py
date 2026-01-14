@@ -18,6 +18,7 @@ def config() -> TokenConfig:
     return load_token_config_from_dict(
         {
             "SECRET_KEY": "test-secret",
-            "JWT_ALGORITHM": "HS256",
+            "JWTSERVICE_ALGORITHM": "HS256",
+            "JWTSERVICE_ISSUER": "issuer",
         }
     )

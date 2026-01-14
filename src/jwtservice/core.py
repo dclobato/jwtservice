@@ -14,12 +14,12 @@ import logging
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Optional, Type
+from typing import Any, Dict, List, Optional, Type, Union
 
 import jwt
 
 
-class JWT_action(Enum):
+class JWTAction(Enum):
     """Enumeração que define as ações possíveis para tokens JWT."""
 
     NO_ACTION = 0
@@ -30,8 +30,16 @@ class JWT_action(Enum):
     PENDING_PASSWORD_CHANGE = 5
 
 
-class TokenCreationError(Exception):
-    """Raised when a JWT token cannot be created."""
+class JWTServiceError(Exception):
+    """Erro base para o JWTService."""
+
+
+class TokenCreationError(JWTServiceError):
+    """Lançado quando um token JWT não pode ser criado."""
+
+
+class TokenValidationError(JWTServiceError):
+    """Lançado quando um token JWT não pode ser validado."""
 
 
 @dataclass
@@ -42,6 +50,7 @@ class TokenVerificationResult:
     sub: Optional[str] = None
     action: Optional[Enum] = None
     age: Optional[int] = None
+    aud: Optional[str] = None
     extra_data: Optional[Dict[Any, Any]] = None
     reason: Optional[str] = None
 
@@ -53,7 +62,7 @@ class JWTService:
         self,
         config: "TokenConfig",
         logger: logging.Logger,
-        action_enum: Type[Enum] = JWT_action,
+        action_enum: Type[Enum] = JWTAction,
     ) -> None:
         """Inicializa o serviço de tokens.
 
@@ -69,7 +78,7 @@ class JWTService:
         logger.debug("JWTService inicializado com algoritmo: %s", config.algorithm)
 
     def _ensure_jsonable(self, data: Any) -> Any:
-        """Validate that data can be JSON-serialized without transforming it."""
+        """Valida que os dados podem ser serializados em JSON sem transformá-los."""
         # Valida sem transformar, só garante serialização.
         try:
             json.dumps(data, separators=(",", ":"), ensure_ascii=False)
@@ -82,9 +91,18 @@ class JWTService:
         action: Optional[Enum] = None,
         sub: Any = None,
         expires_in: int = 600,
+        audience: Optional[str] = None,
         extra_data: Optional[Dict[Any, Any]] = None,
     ) -> str:
-        """Create a JWT token with the provided claims."""
+        """Cria um token JWT com as claims fornecidas.
+
+        Args:
+            action: Ação do token (usa NO_ACTION se não fornecido)
+            sub: Subject identifier (identificador do usuário/entidade)
+            expires_in: Tempo de expiração em segundos (padrão: 600)
+            audience: Audience do token (string)
+            extra_data: Dados extras para incluir no payload
+        """
         if sub is None:
             raise ValueError("sub deve ser informado")
 
@@ -101,7 +119,7 @@ class JWTService:
 
         agora = int(time.time())
         if action is None:
-            action = self._action_enum.NO_ACTION
+            action = getattr(self._action_enum, "NO_ACTION")
 
         if not isinstance(action, Enum):
             raise ValueError("action deve ser Enum")
@@ -110,11 +128,19 @@ class JWTService:
             "sub": sub_str,
             "iat": agora,
             "nbf": agora,
+            "iss": self._config.issuer,
             "action": action.name,
         }
 
         if expires_in > 0:
             payload["exp"] = agora + expires_in
+
+        if audience:
+            if not isinstance(audience, str) or not audience.strip():
+                raise ValueError("audience deve ser uma string não vazia")
+            payload["aud"] = audience
+        elif self._config.audience:
+            payload["aud"] = self._config.audience
 
         if extra_data is not None:
             if not isinstance(extra_data, dict):
@@ -150,8 +176,17 @@ class JWTService:
 
         return token
 
-    def validar(self, token: str) -> TokenVerificationResult:
-        """Validate a JWT token and return a structured result."""
+    def validar(
+        self, token: str, audience: Optional[Union[str, List[str]]] = None
+    ) -> TokenVerificationResult:
+        """Valida um token JWT e retorna um resultado estruturado.
+
+        Args:
+            token: Token JWT a ser validado
+            audience: Audience opcional para validar. Pode ser uma string ou lista de strings.
+                     Se uma lista for fornecida, o token é válido se seu audience corresponder
+                     a QUALQUER um dos valores na lista.
+        """
         if not isinstance(token, str) or not token.strip():
             return TokenVerificationResult(valid=False, reason="missing_token")
 
@@ -160,22 +195,34 @@ class JWTService:
                 token,
                 key=self._config.secret_key,
                 algorithms=[self._config.algorithm],
+                leeway=self._config.leeway,
+                audience=audience or self._config.audience,
+                issuer=self._config.issuer,
+                options={
+                    "verify_aud": bool(audience or self._config.audience),
+                },
             )
-        except jwt.ExpiredSignatureError as e:
+        except jwt.ExpiredSignatureError:
             self._logger.info("JWT expirado")
             return TokenVerificationResult(valid=False, reason="expired")
-        except jwt.InvalidSignatureError as e:
+        except jwt.InvalidSignatureError:
             self._logger.warning("Assinatura inválida no JWT")
             return TokenVerificationResult(valid=False, reason="bad_signature")
         except jwt.ImmatureSignatureError:
             self._logger.warning("JWT ainda não válido (nbf no futuro)")
             return TokenVerificationResult(valid=False, reason="immature")
-        except jwt.InvalidTokenError as e:
+        except jwt.InvalidIssuerError:
+            self._logger.warning("Issuer inválido no JWT")
+            return TokenVerificationResult(valid=False, reason="invalid_issuer")
+        except jwt.InvalidAudienceError:
+            self._logger.warning("Audience inválido no JWT")
+            return TokenVerificationResult(valid=False, reason="invalid_audience")
+        except jwt.InvalidTokenError:
             self._logger.warning("JWT inválido")
             return TokenVerificationResult(valid=False, reason="invalid")
         except Exception as e:
             self._logger.exception("Falha inesperada ao decodificar JWT")
-            return TokenVerificationResult(valid=False, reason="internal_error")
+            raise TokenValidationError("Falha inesperada ao validar token") from e
 
         sub = payload.get("sub")
         if not isinstance(sub, str) or not sub:
@@ -196,16 +243,20 @@ class JWTService:
                 age = int(time.time()) - int(payload["iat"])
             except (TypeError, ValueError):
                 return TokenVerificationResult(valid=False, reason="invalid_iat")
+            if age < 0:
+                return TokenVerificationResult(valid=False, reason="invalid_iat")
 
         extra_data = payload.get("extra_data")
         if extra_data is not None and not isinstance(extra_data, dict):
             return TokenVerificationResult(valid=False, reason="invalid_extra_data")
 
+        aud = payload.get("aud")
         return TokenVerificationResult(
             valid=True,
             sub=sub,
             action=acao,
             age=age,
+            aud=aud if aud else None,
             extra_data=extra_data,
         )
 
@@ -216,19 +267,32 @@ class TokenConfig:
 
     secret_key: str
     algorithm: str
+    audience: Optional[str]
+    issuer: str
+    leeway: int
 
     def __post_init__(self) -> None:
         if not isinstance(self.secret_key, str) or not self.secret_key.strip():
             raise ValueError("SECRET_KEY deve ser uma string valida")
 
         if not isinstance(self.algorithm, str) or not self.algorithm.strip():
-            raise ValueError("JWT_ALGORITHM deve ser uma string valida")
+            raise ValueError("JWTSERVICE_ALGORITHM deve ser uma string valida")
+
+        if self.audience is not None:
+            if not isinstance(self.audience, str) or not self.audience.strip():
+                raise ValueError("JWTSERVICE_AUDIENCE deve ser uma string não vazia")
+
+        if not isinstance(self.issuer, str) or not self.issuer.strip():
+            raise ValueError("JWTSERVICE_ISSUER deve ser uma string valida")
+
+        if not isinstance(self.leeway, int) or self.leeway < 0:
+            raise ValueError("JWTSERVICE_LEEWAY deve ser um inteiro nao negativo")
 
         algoritmo = self.algorithm.strip().upper()
         object.__setattr__(self, "algorithm", algoritmo)
         if algoritmo != "HS256":
             raise ValueError(
-                "JWT_ALGORITHM nao suportado. Use HS256 (sem chaves RSA configuradas)."
+                "JWTSERVICE_ALGORITHM não suportado. Use HS256 (sem chaves RSA configuradas)."
             )
 
 
@@ -241,9 +305,18 @@ def load_token_config_from_dict(app_config: Dict[str, Any]) -> TokenConfig:
     Returns:
         TokenConfig: Configuracao validada do servico.
     """
-    app_config.setdefault("JWT_ALGORITHM", "HS256")
+    app_config.setdefault("JWTSERVICE_ALGORITHM", "HS256")
+    app_config.setdefault("JWTSERVICE_ISSUER", "JWTService")
+    app_config.setdefault("JWTSERVICE_LEEWAY", 0)
+
+    secret_key = app_config.get("SECRET_KEY")
+    if secret_key is None:
+        raise ValueError("SECRET_KEY must be provided in app_config")
 
     return TokenConfig(
-        secret_key=app_config.get("SECRET_KEY"),
-        algorithm=app_config.get("JWT_ALGORITHM"),
+        secret_key=str(secret_key),
+        algorithm=str(app_config.get("JWTSERVICE_ALGORITHM")),
+        audience=str(app_config.get("JWTSERVICE_AUDIENCE")) if app_config.get("JWTSERVICE_AUDIENCE") else None,
+        issuer=str(app_config.get("JWTSERVICE_ISSUER")),
+        leeway=int(app_config.get("JWTSERVICE_LEEWAY") or 0),
     )

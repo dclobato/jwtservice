@@ -4,10 +4,11 @@ import jwt
 import pytest
 
 from jwtservice import (
-    JWT_action,
+    JWTAction,
     JWTService,
     TokenConfig,
     TokenCreationError,
+    TokenValidationError,
     load_token_config_from_dict,
 )
 
@@ -15,7 +16,7 @@ from jwtservice import (
 def test_create_and_validate_token(config, logger) -> None:
     service = JWTService(config=config, logger=logger)
     token = service.criar(
-        action=JWT_action.VALIDAR_EMAIL,
+        action=JWTAction.VALIDAR_EMAIL,
         sub="user@example.com",
         expires_in=300,
         extra_data={"flow": "signup"},
@@ -25,7 +26,7 @@ def test_create_and_validate_token(config, logger) -> None:
 
     assert result.valid is True
     assert result.sub == "user@example.com"
-    assert result.action == JWT_action.VALIDAR_EMAIL
+    assert result.action == JWTAction.VALIDAR_EMAIL
     assert result.extra_data == {"flow": "signup"}
     assert result.age is not None
 
@@ -37,12 +38,16 @@ def test_create_without_action_defaults_to_no_action(config, logger) -> None:
     result = service.validar(token)
 
     assert result.valid is True
-    assert result.action == JWT_action.NO_ACTION
+    assert result.action == JWTAction.NO_ACTION
 
 
 def test_invalid_signature_returns_reason(logger) -> None:
-    service_a = JWTService(config=TokenConfig("secret-a", "HS256"), logger=logger)
-    service_b = JWTService(config=TokenConfig("secret-b", "HS256"), logger=logger)
+    service_a = JWTService(
+        config=TokenConfig("secret-a", "HS256", None, "issuer", 0), logger=logger
+    )
+    service_b = JWTService(
+        config=TokenConfig("secret-b", "HS256", None, "issuer", 0), logger=logger
+    )
 
     token = service_a.criar(sub="user@example.com")
     result = service_b.validar(token)
@@ -75,6 +80,7 @@ def test_invalid_action_returns_reason(config, logger) -> None:
         "sub": "user@example.com",
         "iat": now,
         "nbf": now,
+        "iss": "issuer",
         "action": "UNKNOWN_ACTION",
     }
     token = jwt.encode(payload, key=config.secret_key, algorithm=config.algorithm)
@@ -178,6 +184,7 @@ def test_validate_invalid_action_type(config, logger) -> None:
         "sub": "user@example.com",
         "iat": now,
         "nbf": now,
+        "iss": "issuer",
         "action": 123,
     }
     token = jwt.encode(payload, key=config.secret_key, algorithm=config.algorithm)
@@ -194,6 +201,7 @@ def test_validate_missing_sub(config, logger) -> None:
     payload = {
         "iat": now,
         "nbf": now,
+        "iss": "issuer",
         "action": "NO_ACTION",
     }
     token = jwt.encode(payload, key=config.secret_key, algorithm=config.algorithm)
@@ -228,6 +236,7 @@ def test_validate_invalid_extra_data(config, logger) -> None:
         "iat": now,
         "nbf": now,
         "action": "NO_ACTION",
+        "iss": "issuer",
         "extra_data": "oops",
     }
     token = jwt.encode(payload, key=config.secret_key, algorithm=config.algorithm)
@@ -275,10 +284,8 @@ def test_validate_internal_error(config, logger, monkeypatch) -> None:
 
     monkeypatch.setattr(jwt, "decode", raise_unexpected)
 
-    result = service.validar("token")
-
-    assert result.valid is False
-    assert result.reason == "internal_error"
+    with pytest.raises(TokenValidationError, match="Falha inesperada ao validar token"):
+        service.validar("token")
 
 
 def test_load_config_defaults_algorithm() -> None:
@@ -291,20 +298,121 @@ def test_invalid_algorithm_raises() -> None:
         load_token_config_from_dict(
             {
                 "SECRET_KEY": "secret",
-                "JWT_ALGORITHM": "RS256",
+                "JWTSERVICE_ALGORITHM": "RS256",
             }
         )
     except ValueError as exc:
-        assert "JWT_ALGORITHM" in str(exc)
+        assert "JWTSERVICE_ALGORITHM" in str(exc)
     else:
         raise AssertionError("Expected ValueError")
 
 
 def test_invalid_secret_key_raises() -> None:
     with pytest.raises(ValueError, match="SECRET_KEY"):
-        TokenConfig("", "HS256")
+        TokenConfig("", "HS256", None, "issuer", 0)
 
 
 def test_invalid_algorithm_empty_raises() -> None:
-    with pytest.raises(ValueError, match="JWT_ALGORITHM"):
-        TokenConfig("secret", "")
+    with pytest.raises(ValueError, match="JWTSERVICE_ALGORITHM"):
+        TokenConfig("secret", "", None, "issuer", 0)
+
+
+def test_create_token_with_custom_audience(config, logger) -> None:
+    service = JWTService(config=config, logger=logger)
+    token = service.criar(
+        sub="user@example.com",
+        audience="custom-audience",
+    )
+
+    result = service.validar(token, audience="custom-audience")
+
+    assert result.valid is True
+    assert result.aud == "custom-audience"
+
+
+def test_create_token_with_config_audience(logger) -> None:
+    config = TokenConfig("secret", "HS256", "default-audience", "issuer", 0)
+    service = JWTService(config=config, logger=logger)
+    token = service.criar(sub="user@example.com")
+
+    result = service.validar(token)
+
+    assert result.valid is True
+    assert result.aud == "default-audience"
+
+
+def test_validate_token_with_string_audience(config, logger) -> None:
+    service = JWTService(config=config, logger=logger)
+    token = service.criar(sub="user@example.com", audience="api-service")
+
+    result = service.validar(token, audience="api-service")
+
+    assert result.valid is True
+
+
+def test_validate_token_with_list_audience_match(config, logger) -> None:
+    service = JWTService(config=config, logger=logger)
+    token = service.criar(sub="user@example.com", audience="api-service")
+
+    result = service.validar(token, audience=["web-app", "api-service", "mobile-app"])
+
+    assert result.valid is True
+
+
+def test_validate_token_with_list_audience_no_match(config, logger) -> None:
+    service = JWTService(config=config, logger=logger)
+    token = service.criar(sub="user@example.com", audience="api-service")
+
+    result = service.validar(token, audience=["web-app", "mobile-app"])
+
+    assert result.valid is False
+    assert result.reason == "invalid_audience"
+
+
+def test_validate_token_audience_mismatch(config, logger) -> None:
+    service = JWTService(config=config, logger=logger)
+    token = service.criar(sub="user@example.com", audience="api-service")
+
+    result = service.validar(token, audience="wrong-audience")
+
+    assert result.valid is False
+    assert result.reason == "invalid_audience"
+
+
+def test_create_rejects_empty_audience(config, logger) -> None:
+    service = JWTService(config=config, logger=logger)
+
+    with pytest.raises(ValueError, match="audience deve ser uma string não vazia"):
+        service.criar(sub="user@example.com", audience=" ")
+
+
+def test_create_rejects_non_string_audience(config, logger) -> None:
+    service = JWTService(config=config, logger=logger)
+
+    with pytest.raises(ValueError, match="audience deve ser uma string não vazia"):
+        service.criar(sub="user@example.com", audience=123)  # type: ignore[arg-type]
+
+
+def test_config_rejects_empty_audience() -> None:
+    with pytest.raises(ValueError, match="JWTSERVICE_AUDIENCE"):
+        TokenConfig("secret", "HS256", " ", "issuer", 0)
+
+
+def test_config_rejects_non_string_audience() -> None:
+    with pytest.raises(ValueError, match="JWTSERVICE_AUDIENCE"):
+        TokenConfig("secret", "HS256", 123, "issuer", 0)  # type: ignore[arg-type]
+
+
+def test_validate_issuer_mismatch(config, logger) -> None:
+    service_a = JWTService(
+        config=TokenConfig("secret", "HS256", None, "issuer-a", 0), logger=logger
+    )
+    service_b = JWTService(
+        config=TokenConfig("secret", "HS256", None, "issuer-b", 0), logger=logger
+    )
+
+    token = service_a.criar(sub="user@example.com")
+    result = service_b.validar(token)
+
+    assert result.valid is False
+    assert result.reason == "invalid_issuer"
