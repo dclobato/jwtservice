@@ -59,3 +59,10 @@ def test_sqlite_ttl_validation(tmp_path) -> None:
         assert store.revoke("token-1", ttl_seconds=-1) is False
     finally:
         store.close()
+
+
+def test_sqlite_context_manager(tmp_path) -> None:
+    db_path = tmp_path / "revocations.db"
+    with SQLiteRevocationStore(str(db_path)) as store:
+        assert store.revoke("token-1", ttl_seconds=10) is True
+        assert store.is_revoked("token-1") is True

@@ -48,7 +48,12 @@ class InMemoryRevocationStore:
 
 
 class SQLiteRevocationStore:
-    """Revogacao em SQLite com limpeza periodica."""
+    """Revogacao em SQLite com limpeza periodica.
+
+    AVISO: Esta implementacao usa check_same_thread=False e nao possui
+    locks explícitos. Para ambientes multi-threaded com alta concorrencia,
+    considere usar um pool de conexoes ou implementar locking adicional.
+    """
 
     def __init__(self, db_path: str, cleanup_interval_seconds: int = 300) -> None:
         if not isinstance(db_path, str) or not db_path.strip():
@@ -72,11 +77,25 @@ class SQLiteRevocationStore:
             )
             """
         )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_revoked_tokens_expires_at
+            ON revoked_tokens(expires_at)
+            """
+        )
         self._conn.commit()
 
     def close(self) -> None:
         """Fecha a conexao com o SQLite."""
         self._conn.close()
+
+    def __enter__(self) -> "SQLiteRevocationStore":
+        """Suporte para context manager."""
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Fecha a conexao ao sair do contexto."""
+        self.close()
 
     def _maybe_cleanup(self, now: int) -> None:
         if now - self._last_cleanup < self._cleanup_interval_seconds:
