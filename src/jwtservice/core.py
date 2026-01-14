@@ -12,11 +12,14 @@ Classes principais:
 import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Type, Union
 
 import jwt
+
+from jwtservice.revocation import RevocationStore
 
 
 class JWTAction(Enum):
@@ -47,6 +50,7 @@ class TokenVerificationResult:
     """Resultado da verificação de um token JWT."""
 
     valid: bool
+    status: str
     sub: Optional[str] = None
     action: Optional[Enum] = None
     age: Optional[int] = None
@@ -63,6 +67,8 @@ class JWTService:
         config: "TokenConfig",
         logger: logging.Logger,
         action_enum: Type[Enum] = JWTAction,
+        revocation_store: Optional[RevocationStore] = None,
+        revocation_ttl_max: Optional[int] = None,
     ) -> None:
         """Inicializa o serviço de tokens.
 
@@ -70,12 +76,28 @@ class JWTService:
             config (TokenConfig): Configurações validadas.
             logger: Logger do serviço.
             action_enum (Type[Enum]): Enum para ações do token.
+            revocation_store: Backend opcional para revogação de tokens.
+            revocation_ttl_max: Limite máximo de TTL em segundos para revogações.
         """
         self._config = config
         self._logger = logger
         self._action_enum = action_enum
+        self._revocation_store = revocation_store
+        self._revocation_ttl_max = revocation_ttl_max
+
+        if self._revocation_ttl_max is not None:
+            if not isinstance(self._revocation_ttl_max, int) or self._revocation_ttl_max <= 0:
+                raise ValueError("revocation_ttl_max deve ser um inteiro positivo")
 
         logger.debug("JWTService inicializado com algoritmo: %s", config.algorithm)
+
+    def _get_now(self) -> int:
+        return int(time.time())
+
+    def _apply_ttl_cap(self, ttl_seconds: int) -> int:
+        if self._revocation_ttl_max is None:
+            return ttl_seconds
+        return min(ttl_seconds, self._revocation_ttl_max)
 
     def _ensure_jsonable(self, data: Any) -> Any:
         """Valida que os dados podem ser serializados em JSON sem transformá-los."""
@@ -92,6 +114,7 @@ class JWTService:
         sub: Any = None,
         expires_in: int = 600,
         audience: Optional[str] = None,
+        jti: Optional[str] = None,
         extra_data: Optional[Dict[Any, Any]] = None,
     ) -> str:
         """Cria um token JWT com as claims fornecidas.
@@ -117,12 +140,20 @@ class JWTService:
         if not isinstance(expires_in, int):
             raise ValueError("expires_in deve ser int")
 
-        agora = int(time.time())
+        agora = self._get_now()
         if action is None:
             action = getattr(self._action_enum, JWTAction.NO_ACTION.name)
 
         if not isinstance(action, Enum):
             raise ValueError("action deve ser Enum")
+
+        if jti is not None:
+            if not isinstance(jti, str) or not jti.strip():
+                raise ValueError("jti deve ser uma string nao vazia")
+            jti_value = jti
+        else:
+            jti_value = str(uuid.uuid4())
+            self._logger.debug("jti gerado automaticamente: %s", jti_value)
 
         payload: Dict[str, Any] = {
             "sub": sub_str,
@@ -130,6 +161,7 @@ class JWTService:
             "nbf": agora,
             "iss": self._config.issuer,
             "action": action.name,
+            "jti": jti_value,
         }
 
         if expires_in > 0:
@@ -188,7 +220,7 @@ class JWTService:
                      a QUALQUER um dos valores na lista.
         """
         if not isinstance(token, str) or not token.strip():
-            return TokenVerificationResult(valid=False, reason="missing_token")
+            return TokenVerificationResult(valid=False, status="invalid", reason="missing_token")
 
         try:
             payload = jwt.decode(
@@ -204,61 +236,145 @@ class JWTService:
             )
         except jwt.ExpiredSignatureError:
             self._logger.info("JWT expirado")
-            return TokenVerificationResult(valid=False, reason="expired")
+            return TokenVerificationResult(valid=False, status="expired", reason="expired")
         except jwt.InvalidSignatureError:
             self._logger.warning("Assinatura inválida no JWT")
-            return TokenVerificationResult(valid=False, reason="bad_signature")
+            return TokenVerificationResult(valid=False, status="invalid", reason="bad_signature")
         except jwt.ImmatureSignatureError:
             self._logger.warning("JWT ainda não válido (nbf no futuro)")
-            return TokenVerificationResult(valid=False, reason="immature")
+            return TokenVerificationResult(valid=False, status="invalid", reason="immature")
         except jwt.InvalidIssuerError:
             self._logger.warning("Issuer inválido no JWT")
-            return TokenVerificationResult(valid=False, reason="invalid_issuer")
+            return TokenVerificationResult(valid=False, status="invalid", reason="invalid_issuer")
         except jwt.InvalidAudienceError:
             self._logger.warning("Audience inválido no JWT")
-            return TokenVerificationResult(valid=False, reason="invalid_audience")
+            return TokenVerificationResult(valid=False, status="invalid", reason="invalid_audience")
         except jwt.InvalidTokenError:
             self._logger.warning("JWT inválido")
-            return TokenVerificationResult(valid=False, reason="invalid")
+            return TokenVerificationResult(valid=False, status="invalid", reason="invalid")
         except Exception as e:
             self._logger.exception("Falha inesperada ao decodificar JWT")
             raise TokenValidationError("Falha inesperada ao validar token") from e
 
         sub = payload.get("sub")
         if not isinstance(sub, str) or not sub:
-            return TokenVerificationResult(valid=False, reason="missing_sub")
+            return TokenVerificationResult(valid=False, status="invalid", reason="missing_sub")
 
         action_raw = payload.get("action", "NO_ACTION")
         if not isinstance(action_raw, str):
-            return TokenVerificationResult(valid=False, reason="invalid_action")
+            return TokenVerificationResult(valid=False, status="invalid", reason="invalid_action")
 
         try:
             acao = self._action_enum[action_raw]
         except KeyError:
-            return TokenVerificationResult(valid=False, reason="invalid_action")
+            return TokenVerificationResult(valid=False, status="invalid", reason="invalid_action")
 
         age = None
         if "iat" in payload:
             try:
-                age = int(time.time()) - int(payload["iat"])
+                age = self._get_now() - int(payload["iat"])
             except (TypeError, ValueError):
-                return TokenVerificationResult(valid=False, reason="invalid_iat")
+                return TokenVerificationResult(valid=False, status="invalid", reason="invalid_iat")
             if age < 0:
-                return TokenVerificationResult(valid=False, reason="invalid_iat")
+                return TokenVerificationResult(valid=False, status="invalid", reason="invalid_iat")
 
         extra_data = payload.get("extra_data")
         if extra_data is not None and not isinstance(extra_data, dict):
-            return TokenVerificationResult(valid=False, reason="invalid_extra_data")
+            return TokenVerificationResult(
+                valid=False, status="invalid", reason="invalid_extra_data"
+            )
+
+        if self._revocation_store is not None:
+            jti = payload.get("jti")
+            if not isinstance(jti, str) or not jti.strip():
+                return TokenVerificationResult(valid=False, status="invalid", reason="missing_jti")
+            if self._revocation_store.is_revoked(jti):
+                return TokenVerificationResult(valid=False, status="revoked", reason="revoked")
 
         aud = payload.get("aud")
         return TokenVerificationResult(
             valid=True,
+            status="valid",
             sub=sub,
             action=acao,
             age=age,
             aud=aud if aud else None,
             extra_data=extra_data,
         )
+
+    def revogar(
+        self,
+        token: str,
+        audience: Optional[Union[str, List[str]]] = None,
+        reason: Optional[str] = None,
+    ) -> bool:
+        """Revoga um token JWT armazenando seu jti com TTL."""
+        if self._revocation_store is None:
+            self._logger.warning("Revogacao solicitada sem revocation_store configurado")
+            return False
+
+        if not isinstance(token, str) or not token.strip():
+            return False
+
+        try:
+            payload = jwt.decode(
+                token,
+                key=self._config.secret_key,
+                algorithms=[self._config.algorithm],
+                leeway=self._config.leeway,
+                options={
+                    "verify_signature": True,
+                    "verify_exp": True,
+                    "verify_aud": False,
+                    "verify_iss": False,
+                    "verify_nbf": False,
+                    "verify_iat": False,
+                },
+            )
+        except jwt.ExpiredSignatureError:
+            self._logger.info("JWT expirado (revogacao ignorada)")
+            return False
+        except jwt.InvalidTokenError:
+            self._logger.warning("JWT invalido (revogacao ignorada)")
+            return False
+        except Exception as e:
+            self._logger.exception("Falha inesperada ao decodificar JWT para revogacao")
+            raise TokenValidationError("Falha inesperada ao validar token") from e
+
+        jti = payload.get("jti")
+        if not isinstance(jti, str) or not jti.strip():
+            return False
+
+        exp = payload.get("exp")
+        if not isinstance(exp, int):
+            return False
+
+        ttl_seconds = exp - self._get_now()
+        if ttl_seconds <= 0:
+            return False
+
+        ttl_seconds = self._apply_ttl_cap(ttl_seconds)
+        metadata = {"reason": reason} if reason else None
+        return self._revocation_store.revoke(jti, ttl_seconds, metadata)
+
+    def revogar_jti(self, jti: str, exp: int, reason: Optional[str] = None) -> bool:
+        """Revoga um jti conhecido usando o exp fornecido."""
+        if self._revocation_store is None:
+            self._logger.warning("Revogacao solicitada sem revocation_store configurado")
+            return False
+
+        if not isinstance(jti, str) or not jti.strip():
+            return False
+        if not isinstance(exp, int):
+            return False
+
+        ttl_seconds = exp - self._get_now()
+        if ttl_seconds <= 0:
+            return False
+
+        ttl_seconds = self._apply_ttl_cap(ttl_seconds)
+        metadata = {"reason": reason} if reason else None
+        return self._revocation_store.revoke(jti, ttl_seconds, metadata)
 
 
 @dataclass(frozen=True)

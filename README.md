@@ -14,6 +14,7 @@ A lightweight JWT creation and validation service. It provides a small, explicit
 - Consistent error reasons for invalid tokens
 - Built-in support for issuer (`iss`) and audience (`aud`) claims
 - Flexible audience validation (string or list of strings)
+- Optional per-token revocation with TTL based on `exp`
 
 ## Installation
 
@@ -69,6 +70,7 @@ token = service.criar(
 # Validate token
 result = service.validar(token)
 print(f"Valid: {result.valid}")
+print(f"Status: {result.status}")
 print(f"Subject: {result.sub}")
 print(f"Action: {result.action}")
 ```
@@ -184,7 +186,64 @@ The service stores the following fields:
 - `iss`: issuer (from config)
 - `aud`: audience (from config or from call to `criar`, or None)
 - `action`: enum name
+- `jti`: unique token identifier (UUID v4)
 - `extra_data`: optional dict
+
+## Token Revocation
+
+You can enable per-token revocation by configuring a revocation store. Revocations
+are stored with a TTL based on the token `exp`, so they expire automatically.
+
+Note: `RevocationStore` uses a `Protocol` (structural typing) so any backend that
+implements `is_revoked` and `revoke` can be plugged in without inheritance. If you
+prefer explicit inheritance and method enforcement at runtime, an `ABC` could be
+used instead, but it would require backends to subclass it directly.
+
+To add a new backend (e.g., Redis/Valkey), implement `is_revoked(jti)` and
+`revoke(jti, ttl_seconds, metadata=None)`. For Redis, you can use `SET` with
+`NX` + `EX` for atomic insert and `EXISTS` for checks:
+
+```python
+class RedisRevocationStore:
+    def __init__(self, client):
+        self._client = client
+
+    def is_revoked(self, jti: str) -> bool:
+        return bool(self._client.exists(f"revoked:{jti}"))
+
+    def revoke(self, jti: str, ttl_seconds: int, metadata=None) -> bool:
+        return bool(self._client.set(f"revoked:{jti}", "1", ex=ttl_seconds, nx=True))
+```
+
+```python
+from jwtservice import InMemoryRevocationStore, JWTService
+
+store = InMemoryRevocationStore()
+service = JWTService(config=config, logger=logger, revocation_store=store)
+
+token = service.criar(sub="user@example.com")
+service.revogar(token, reason="logout")
+
+result = service.validar(token)
+print(result.status)  # "revoked"
+```
+
+For single-instance deployments you can use SQLite:
+
+```python
+from jwtservice import SQLiteRevocationStore, JWTService
+
+store = SQLiteRevocationStore("revocations.db")
+service = JWTService(config=config, logger=logger, revocation_store=store)
+```
+
+You can also revoke by jti/exp if you have those values in logs:
+
+```python
+service.revogar_jti(jti="...", exp=1710000000, reason="incident")
+```
+
+**See also**: `examples/revocation_usage.py` for in-memory and SQLite examples.
 
 ## Error Reasons
 
@@ -192,6 +251,7 @@ The service stores the following fields:
 
 - `missing_sub` - Token is missing the subject claim
 - `missing_token` - No token provided or empty token
+- `missing_jti` - Token is missing the jti claim (when revocation is enabled)
 - `expired` - Token has expired
 - `bad_signature` - Token signature is invalid
 - `immature` - Token is not yet valid (nbf in future)
@@ -200,6 +260,7 @@ The service stores the following fields:
 - `invalid_iat` - Invalid issued at timestamp
 - `invalid` - Token is malformed or invalid
 - `invalid_action` - Action is not a valid enum value
+- `revoked` - Token has been revoked
 
 ## Contributing
 
