@@ -10,10 +10,26 @@ class RevocationStore(Protocol):
     """Interface para backends de revogacao."""
 
     def is_revoked(self, jti: str) -> bool:
-        """Retorna True se o jti estiver revogado e nao expirado."""
+        """Verifica se um jti esta revogado e nao expirado.
+
+        Args:
+            jti (str): Identificador unico do token (JWT ID).
+
+        Returns:
+            bool: True se o jti estiver revogado e ainda nao expirou, False caso contrario.
+        """
 
     def revoke(self, jti: str, ttl_seconds: int, metadata: Optional[Dict[str, Any]] = None) -> bool:
-        """Registra revogacao com TTL. Retorna True se inseriu agora."""
+        """Registra a revogacao de um jti com TTL.
+
+        Args:
+            jti (str): Identificador unico do token (JWT ID).
+            ttl_seconds (int): Tempo de vida da revogacao em segundos.
+            metadata (Optional[Dict[str, Any]]): Metadados opcionais da revogacao.
+
+        Returns:
+            bool: True se a revogacao foi inserida agora, False se ja existia.
+        """
 
 
 class InMemoryRevocationStore:
@@ -28,11 +44,29 @@ class InMemoryRevocationStore:
             del self._store[jti]
 
     def is_revoked(self, jti: str) -> bool:
+        """Verifica se um jti esta revogado e nao expirado.
+
+        Args:
+            jti (str): Identificador unico do token (JWT ID).
+
+        Returns:
+            bool: True se o jti estiver revogado e ainda nao expirou, False caso contrario.
+        """
         now = int(time.time())
         self._purge_if_expired(jti, now)
         return jti in self._store
 
     def revoke(self, jti: str, ttl_seconds: int, metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """Registra a revogacao de um jti com TTL.
+
+        Args:
+            jti (str): Identificador unico do token (JWT ID).
+            ttl_seconds (int): Tempo de vida da revogacao em segundos.
+            metadata (Optional[Dict[str, Any]]): Metadados opcionais da revogacao.
+
+        Returns:
+            bool: True se a revogacao foi inserida agora, False se ja existia ou ttl invalido.
+        """
         if ttl_seconds <= 0:
             return False
 
@@ -57,6 +91,18 @@ class SQLiteRevocationStore:
     """
 
     def __init__(self, db_path: str, cleanup_interval_seconds: int = 300) -> None:
+        """Inicializa o store de revogacao com SQLite.
+
+        Args:
+            db_path (str): Caminho do arquivo do banco de dados SQLite. O diretorio sera criado
+                se nao existir.
+            cleanup_interval_seconds (int): Intervalo em segundos para limpeza automatica de
+                registros expirados.
+
+        Raises:
+            ValueError: Se db_path for vazio, cleanup_interval_seconds nao for positivo, ou se
+                nao for possivel criar o diretorio.
+        """
         if not isinstance(db_path, str) or not db_path.strip():
             raise ValueError("db_path deve ser uma string valida")
         if cleanup_interval_seconds <= 0:
@@ -69,7 +115,7 @@ class SQLiteRevocationStore:
         if not db_dir.exists():
             try:
                 db_dir.mkdir(parents=True, exist_ok=True)
-            except (OSError, PermissionError) as e:
+            except OSError as e:
                 raise ValueError(f"Nao foi possivel criar o diretorio {db_dir}: {e}") from e
 
         if not db_dir.is_dir():
@@ -119,6 +165,14 @@ class SQLiteRevocationStore:
         self._last_cleanup = now
 
     def is_revoked(self, jti: str) -> bool:
+        """Verifica se um jti esta revogado e nao expirado.
+
+        Args:
+            jti (str): Identificador unico do token (JWT ID).
+
+        Returns:
+            bool: True se o jti estiver revogado e ainda nao expirou, False caso contrario.
+        """
         now = int(time.time())
         self._maybe_cleanup(now)
         cursor = self._conn.execute(
@@ -128,6 +182,17 @@ class SQLiteRevocationStore:
         return cursor.fetchone() is not None
 
     def revoke(self, jti: str, ttl_seconds: int, metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """Registra a revogacao de um jti com TTL.
+
+        Args:
+            jti (str): Identificador unico do token (JWT ID).
+            ttl_seconds (int): Tempo de vida da revogacao em segundos.
+            metadata (Optional[Dict[str, Any]]): Metadados opcionais da revogacao. Apenas 'reason'
+                e armazenado.
+
+        Returns:
+            bool: True se a revogacao foi inserida agora, False se ja existia ou ttl invalido.
+        """
         if ttl_seconds <= 0:
             return False
 

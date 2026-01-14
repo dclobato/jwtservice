@@ -765,6 +765,7 @@ def test_revogar_jti_applies_ttl_cap(config, logger) -> None:
 
 def test_revogar_jti_includes_leeway_in_ttl(logger) -> None:
     """Test that revogar_jti adds leeway to TTL to cover the validation window."""
+
     class CaptureStore:
         def __init__(self) -> None:
             self.last_ttl = None
@@ -797,6 +798,7 @@ def test_revogar_jti_includes_leeway_in_ttl(logger) -> None:
 
 def test_revogar_includes_leeway_in_ttl(logger) -> None:
     """Test that revogar adds leeway to TTL to cover the validation window."""
+
     class CaptureStore:
         def __init__(self) -> None:
             self.last_ttl = None
@@ -830,7 +832,9 @@ def test_revogar_includes_leeway_in_ttl(logger) -> None:
         "jti": "test-jti",
         "action": "NO_ACTION",
     }
-    token = jwt.encode(payload, key=config_with_leeway.secret_key, algorithm=config_with_leeway.algorithm)
+    token = jwt.encode(
+        payload, key=config_with_leeway.secret_key, algorithm=config_with_leeway.algorithm
+    )
 
     # Revoke the token
     assert service.revogar(token) is True

@@ -100,7 +100,17 @@ class JWTService:
         return min(ttl_seconds, self._revocation_ttl_max)
 
     def _ensure_jsonable(self, data: Any) -> Any:
-        """Valida que os dados podem ser serializados em JSON sem transformá-los."""
+        """Valida que os dados podem ser serializados em JSON sem transformá-los.
+
+        Args:
+            data (Any): Dados a serem validados.
+
+        Returns:
+            Any: Os mesmos dados se forem serializáveis.
+
+        Raises:
+            TokenCreationError: Se os dados não forem serializáveis em JSON.
+        """
         # Valida sem transformar, só garante serialização.
         try:
             json.dumps(data, separators=(",", ":"), ensure_ascii=False)
@@ -120,11 +130,22 @@ class JWTService:
         """Cria um token JWT com as claims fornecidas.
 
         Args:
-            action: Ação do token (usa NO_ACTION se não fornecido)
-            sub: Subject identifier (identificador do usuário/entidade)
-            expires_in: Tempo de expiração em segundos (padrão: 600)
-            audience: Audience do token (string)
-            extra_data: Dados extras para incluir no payload
+            action (Optional[Enum]): Ação do token (usa NO_ACTION se não fornecido).
+            sub (Any): Subject identifier (identificador do usuário/entidade).
+            expires_in (int): Tempo de expiração em segundos (padrão: 600).
+            audience (Optional[str]): Audience do token (string).
+            jti (Optional[str]): JWT ID opcional. Se não fornecido, será gerado automaticamente.
+            extra_data (Optional[Dict[Any, Any]]): Dados extras para incluir no payload.
+
+        Returns:
+            str: Token JWT codificado como string.
+
+        Raises:
+            ValueError: Se sub for None, vazio, não conversível para string, ou se expires_in não
+                for int, ou se action não for Enum, ou se jti for inválido, ou se audience for
+                inválido, ou se extra_data não for dict.
+            TokenCreationError: Se houver falha ao codificar o token ou se extra_data não for
+                serializável em JSON.
         """
         if sub is None:
             raise ValueError("sub deve ser informado")
@@ -214,10 +235,17 @@ class JWTService:
         """Valida um token JWT e retorna um resultado estruturado.
 
         Args:
-            token: Token JWT a ser validado
-            audience: Audience opcional para validar. Pode ser uma string ou lista de strings.
-                     Se uma lista for fornecida, o token é válido se seu audience corresponder
-                     a QUALQUER um dos valores na lista.
+            token (str): Token JWT a ser validado.
+            audience (Optional[Union[str, List[str]]]): Audience opcional para validar. Pode ser
+                uma string ou lista de strings. Se uma lista for fornecida, o token é válido se
+                seu audience corresponder a QUALQUER um dos valores na lista.
+
+        Returns:
+            TokenVerificationResult: Resultado estruturado da validação contendo status, sub,
+                action, age, aud, extra_data e reason.
+
+        Raises:
+            TokenValidationError: Se houver falha inesperada ao decodificar o token.
         """
         if not isinstance(token, str) or not token.strip():
             return TokenVerificationResult(valid=False, status="invalid", reason="missing_token")
@@ -307,7 +335,19 @@ class JWTService:
         token: str,
         reason: Optional[str] = None,
     ) -> bool:
-        """Revoga um token JWT armazenando seu jti com TTL."""
+        """Revoga um token JWT armazenando seu jti com TTL.
+
+        Args:
+            token (str): Token JWT a ser revogado.
+            reason (Optional[str]): Motivo opcional para a revogação.
+
+        Returns:
+            bool: True se o token foi revogado com sucesso, False se não há revocation_store
+                configurado, token inválido ou expirado.
+
+        Raises:
+            TokenValidationError: Se houver falha inesperada ao decodificar o token.
+        """
         if self._revocation_store is None:
             self._logger.warning("Revogacao solicitada sem revocation_store configurado")
             return False
@@ -357,7 +397,17 @@ class JWTService:
         return self._revocation_store.revoke(jti, ttl_seconds, metadata)
 
     def revogar_jti(self, jti: str, exp: int, reason: Optional[str] = None) -> bool:
-        """Revoga um jti conhecido usando o exp fornecido."""
+        """Revoga um jti conhecido usando o exp fornecido.
+
+        Args:
+            jti (str): Identificador único do token (JWT ID).
+            exp (int): Timestamp de expiração do token.
+            reason (Optional[str]): Motivo opcional para a revogação.
+
+        Returns:
+            bool: True se o jti foi revogado com sucesso, False se não há revocation_store
+                configurado, jti inválido, ou exp já expirado.
+        """
         if self._revocation_store is None:
             self._logger.warning("Revogacao solicitada sem revocation_store configurado")
             return False
