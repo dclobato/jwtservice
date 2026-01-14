@@ -2,6 +2,7 @@
 
 import sqlite3
 import time
+from pathlib import Path
 from typing import Any, Dict, Optional, Protocol
 
 
@@ -61,7 +62,20 @@ class SQLiteRevocationStore:
         if cleanup_interval_seconds <= 0:
             raise ValueError("cleanup_interval_seconds deve ser positivo")
 
-        self._db_path = db_path
+        # Validar e criar diretorio se necessario
+        db_file_path = Path(db_path).resolve()
+        db_dir = db_file_path.parent
+
+        if not db_dir.exists():
+            try:
+                db_dir.mkdir(parents=True, exist_ok=True)
+            except (OSError, PermissionError) as e:
+                raise ValueError(f"Nao foi possivel criar o diretorio {db_dir}: {e}") from e
+
+        if not db_dir.is_dir():
+            raise ValueError(f"O caminho {db_dir} existe mas nao e um diretorio")
+
+        self._db_path = str(db_file_path)
         self._cleanup_interval_seconds = cleanup_interval_seconds
         self._last_cleanup = 0
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
