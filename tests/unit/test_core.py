@@ -416,3 +416,18 @@ def test_validate_issuer_mismatch(config, logger) -> None:
 
     assert result.valid is False
     assert result.reason == "invalid_issuer"
+
+
+def test_create_rejects_non_string_issuer() -> None:
+    with pytest.raises(ValueError, match="JWTSERVICE_ISSUER"):
+        TokenConfig("secret", "HS256", "audience", ["issuer1", "issuer2"], 0)  # type: ignore[arg-type]
+
+
+def test_create_rejects_negative_leeway() -> None:
+    with pytest.raises(ValueError, match="JWTSERVICE_LEEWAY"):
+        TokenConfig("secret", "HS256", "audience", "issuer", -10)  # type: ignore[arg-type]
+
+
+def test_create_rejects_no_secret() -> None:
+    with pytest.raises(ValueError, match="SECRET_KEY"):
+        load_token_config_from_dict({})

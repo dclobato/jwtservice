@@ -33,7 +33,7 @@ format:
 	uv run isort src/ tests/ examples/
 
 lint:
-	uv run flake8 src/ tests/ --max-line-length=100 --extend-ignore=E203,W503
+	uv run flake8 src/ tests/ --max-line-length=100 --extend-ignore=E203,W503,E501 --extend-select=B950
 
 type-check:
 	uv run mypy src/

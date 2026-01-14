@@ -119,7 +119,7 @@ class JWTService:
 
         agora = int(time.time())
         if action is None:
-            action = getattr(self._action_enum, "NO_ACTION")
+            action = getattr(self._action_enum, JWTAction.NO_ACTION.name)
 
         if not isinstance(action, Enum):
             raise ValueError("action deve ser Enum")
@@ -316,7 +316,11 @@ def load_token_config_from_dict(app_config: Dict[str, Any]) -> TokenConfig:
     return TokenConfig(
         secret_key=str(secret_key),
         algorithm=str(app_config.get("JWTSERVICE_ALGORITHM")),
-        audience=str(app_config.get("JWTSERVICE_AUDIENCE")) if app_config.get("JWTSERVICE_AUDIENCE") else None,
+        audience=(
+            str(app_config.get("JWTSERVICE_AUDIENCE"))
+            if app_config.get("JWTSERVICE_AUDIENCE")
+            else None
+        ),
         issuer=str(app_config.get("JWTSERVICE_ISSUER")),
         leeway=int(app_config.get("JWTSERVICE_LEEWAY") or 0),
     )
