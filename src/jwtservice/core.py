@@ -348,7 +348,7 @@ class JWTService:
         if not isinstance(exp, int):
             return False
 
-        ttl_seconds = exp - self._get_now()
+        ttl_seconds = exp - self._get_now() + self._config.leeway
         if ttl_seconds <= 0:
             return False
 
@@ -367,7 +367,7 @@ class JWTService:
         if not isinstance(exp, int):
             return False
 
-        ttl_seconds = exp - self._get_now()
+        ttl_seconds = exp - self._get_now() + self._config.leeway
         if ttl_seconds <= 0:
             return False
 

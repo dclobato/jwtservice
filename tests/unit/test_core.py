@@ -761,3 +761,78 @@ def test_revogar_jti_applies_ttl_cap(config, logger) -> None:
 
     assert service.revogar_jti("jti-1", now + 120) is True
     assert store.last_ttl == 30
+
+
+def test_revogar_jti_includes_leeway_in_ttl(logger) -> None:
+    """Test that revogar_jti adds leeway to TTL to cover the validation window."""
+    class CaptureStore:
+        def __init__(self) -> None:
+            self.last_ttl = None
+
+        def is_revoked(self, jti: str) -> bool:
+            return False
+
+        def revoke(self, jti: str, ttl_seconds: int, metadata=None) -> bool:
+            self.last_ttl = ttl_seconds
+            return True
+
+    # Create config with leeway=10
+    config_with_leeway = load_token_config_from_dict(
+        {
+            "SECRET_KEY": "test-secret",
+            "JWTSERVICE_ALGORITHM": "HS256",
+            "JWTSERVICE_ISSUER": "issuer",
+            "JWTSERVICE_LEEWAY": 10,
+        }
+    )
+    store = CaptureStore()
+    service = JWTService(config=config_with_leeway, logger=logger, revocation_store=store)
+    now = int(time.time())
+
+    # Token expires in 60 seconds from now
+    assert service.revogar_jti("jti-1", now + 60) is True
+    # TTL should be 60 (exp - now) + 10 (leeway) = 70
+    assert store.last_ttl == 70
+
+
+def test_revogar_includes_leeway_in_ttl(logger) -> None:
+    """Test that revogar adds leeway to TTL to cover the validation window."""
+    class CaptureStore:
+        def __init__(self) -> None:
+            self.last_ttl = None
+
+        def is_revoked(self, jti: str) -> bool:
+            return False
+
+        def revoke(self, jti: str, ttl_seconds: int, metadata=None) -> bool:
+            self.last_ttl = ttl_seconds
+            return True
+
+    # Create config with leeway=10
+    config_with_leeway = load_token_config_from_dict(
+        {
+            "SECRET_KEY": "test-secret",
+            "JWTSERVICE_ALGORITHM": "HS256",
+            "JWTSERVICE_ISSUER": "issuer",
+            "JWTSERVICE_LEEWAY": 10,
+        }
+    )
+    store = CaptureStore()
+    service = JWTService(config=config_with_leeway, logger=logger, revocation_store=store)
+    now = int(time.time())
+
+    # Create a token that expires in 60 seconds
+    payload = {
+        "sub": "user@example.com",
+        "iat": now,
+        "exp": now + 60,
+        "iss": config_with_leeway.issuer,
+        "jti": "test-jti",
+        "action": "NO_ACTION",
+    }
+    token = jwt.encode(payload, key=config_with_leeway.secret_key, algorithm=config_with_leeway.algorithm)
+
+    # Revoke the token
+    assert service.revogar(token) is True
+    # TTL should be 60 (exp - now) + 10 (leeway) = 70
+    assert store.last_ttl == 70
