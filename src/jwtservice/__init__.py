@@ -10,6 +10,7 @@ from jwtservice.core import (
     TokenVerificationResult,
     load_token_config_from_dict,
 )
+from jwtservice.revocation import InMemoryRevocationStore, RevocationStore, SQLiteRevocationStore
 
 __all__ = [
     "__version__",
@@ -21,6 +22,9 @@ __all__ = [
     "TokenValidationError",
     "TokenVerificationResult",
     "load_token_config_from_dict",
+    "RevocationStore",
+    "InMemoryRevocationStore",
+    "SQLiteRevocationStore",
 ]
 
 __version__ = "0.1.0"
