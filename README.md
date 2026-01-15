@@ -86,6 +86,15 @@ The service can be configured using a dictionary with the following keys:
 | `JWTSERVICE_ISSUER` | `str` | No | `"JWTService"` | Issuer claim (`iss`) for tokens |
 | `JWTSERVICE_AUDIENCE` | `str` | No | `None` | Default audience claim (`aud`) for tokens |
 | `JWTSERVICE_LEEWAY` | `int` | No | `0` | Leeway in seconds for time-based claims |
+| `JWTSERVICE_RATELIMIT_CREATE` | `int` | No | `6000` | Max create operations per minute |
+| `JWTSERVICE_RATELIMIT_VALIDATE` | `int` | No | `6000` | Max validate operations per minute |
+| `JWTSERVICE_RATELIMIT` | `int` | No | `6000` | Legacy shared default for create/validate limits |
+
+Set `JWTSERVICE_RATELIMIT_CREATE=0` or `JWTSERVICE_RATELIMIT_VALIDATE=0` to disable rate limiting
+for that operation (a warning is logged on startup). If you only set `JWTSERVICE_RATELIMIT`, it
+will be used as the default for both create and validate limits.
+
+**See also**: `examples/rate_limit_usage.py` for a simple rate limiting demo.
 
 ## Audience Configuration
 
