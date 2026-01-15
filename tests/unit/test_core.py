@@ -1,5 +1,6 @@
 import logging
 import time
+from threading import Barrier, Lock, Thread
 
 import jwt
 import pytest
@@ -13,6 +14,7 @@ from jwtservice import (
     TokenValidationError,
     load_token_config_from_dict,
 )
+from jwtservice.core import SlidingWindowRateLimiter
 
 
 def test_create_and_validate_token(config, logger) -> None:
@@ -339,6 +341,23 @@ def test_load_config_defaults_algorithm() -> None:
     assert config.algorithm == "HS256"
 
 
+def test_load_config_defaults_rate_limit() -> None:
+    config = load_token_config_from_dict({"SECRET_KEY": "secret"})
+    assert config.rate_limit_create_per_minute == 6000
+    assert config.rate_limit_validate_per_minute == 6000
+
+
+def test_load_config_legacy_rate_limit_sets_both() -> None:
+    config = load_token_config_from_dict(
+        {
+            "SECRET_KEY": "secret",
+            "JWTSERVICE_RATELIMIT": 1234,
+        }
+    )
+    assert config.rate_limit_create_per_minute == 1234
+    assert config.rate_limit_validate_per_minute == 1234
+
+
 def test_invalid_algorithm_raises() -> None:
     try:
         load_token_config_from_dict(
@@ -361,6 +380,28 @@ def test_invalid_secret_key_raises() -> None:
 def test_invalid_algorithm_empty_raises() -> None:
     with pytest.raises(ValueError, match="JWTSERVICE_ALGORITHM"):
         TokenConfig("secret", "", None, "issuer", 0)
+
+
+def test_invalid_rate_limit_raises() -> None:
+    with pytest.raises(ValueError, match="JWTSERVICE_RATELIMIT_CREATE"):
+        TokenConfig(
+            "secret",
+            "HS256",
+            None,
+            "issuer",
+            0,
+            rate_limit_create_per_minute=-1,
+        )
+
+    with pytest.raises(ValueError, match="JWTSERVICE_RATELIMIT_VALIDATE"):
+        TokenConfig(
+            "secret",
+            "HS256",
+            None,
+            "issuer",
+            0,
+            rate_limit_validate_per_minute=-1,
+        )
 
 
 def test_create_token_with_custom_audience(config, logger) -> None:
@@ -485,6 +526,124 @@ def test_create_rejects_negative_leeway() -> None:
 def test_create_rejects_no_secret() -> None:
     with pytest.raises(ValueError, match="SECRET_KEY"):
         load_token_config_from_dict({})
+
+
+def test_rate_limit_unlimited_logs_warning(logger, caplog) -> None:
+    config = load_token_config_from_dict(
+        {
+            "SECRET_KEY": "secret",
+            "JWTSERVICE_RATELIMIT_CREATE": 0,
+            "JWTSERVICE_RATELIMIT_VALIDATE": 0,
+        }
+    )
+    caplog.set_level(logging.WARNING, logger="jwtservice-tests")
+
+    JWTService(config=config, logger=logger)
+
+    assert any("JWTSERVICE_RATELIMIT_CREATE=0" in record.message for record in caplog.records)
+    assert any("JWTSERVICE_RATELIMIT_VALIDATE=0" in record.message for record in caplog.records)
+
+
+def test_rate_limit_unlimited_allows_operations(logger) -> None:
+    config = load_token_config_from_dict(
+        {
+            "SECRET_KEY": "secret",
+            "JWTSERVICE_RATELIMIT_CREATE": 0,
+            "JWTSERVICE_RATELIMIT_VALIDATE": 0,
+            "JWTSERVICE_ISSUER": "issuer",
+        }
+    )
+    service = JWTService(config=config, logger=logger)
+
+    token = service.criar(sub="user@example.com")
+    result = service.validar(token)
+
+    assert result.valid is True
+
+
+def test_rate_limiter_rejects_non_positive_limit() -> None:
+    with pytest.raises(ValueError, match="limit_per_minute"):
+        SlidingWindowRateLimiter(0)
+
+
+def test_rate_limiter_thread_safety() -> None:
+    limiter = SlidingWindowRateLimiter(5, time_fn=lambda: 1000.0)
+    results = []
+    lock = Lock()
+    barrier = Barrier(20)
+
+    def worker() -> None:
+        barrier.wait()
+        allowed = limiter.allow()
+        with lock:
+            results.append(allowed)
+
+    threads = [Thread(target=worker) for _ in range(20)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert sum(results) == 5
+
+
+def test_rate_limit_blocks_create(config, logger) -> None:
+    limited_config = load_token_config_from_dict(
+        {
+            "SECRET_KEY": config.secret_key,
+            "JWTSERVICE_RATELIMIT_CREATE": 1,
+            "JWTSERVICE_RATELIMIT_VALIDATE": 5,
+            "JWTSERVICE_ISSUER": config.issuer,
+        }
+    )
+    service = JWTService(config=limited_config, logger=logger)
+    assert service._rate_limiter_create is not None
+    service._rate_limiter_create._time_fn = lambda: 1000.0
+
+    service.criar(sub="user@example.com")
+    with pytest.raises(TokenCreationError, match="Rate limit excedido"):
+        service.criar(sub="user@example.com")
+
+
+def test_rate_limit_blocks_validation(config, logger) -> None:
+    limited_config = load_token_config_from_dict(
+        {
+            "SECRET_KEY": config.secret_key,
+            "JWTSERVICE_RATELIMIT_CREATE": 1,
+            "JWTSERVICE_RATELIMIT_VALIDATE": 1,
+            "JWTSERVICE_ISSUER": config.issuer,
+        }
+    )
+    service = JWTService(config=limited_config, logger=logger)
+    assert service._rate_limiter_validate is not None
+    service._rate_limiter_validate._time_fn = lambda: 1000.0
+
+    token = service.criar(sub="user@example.com")
+    assert service.validar(token).valid is True
+    with pytest.raises(TokenValidationError, match="Rate limit excedido"):
+        service.validar(token)
+
+
+def test_rate_limit_sliding_window_allows_after_window(config, logger) -> None:
+    limited_config = load_token_config_from_dict(
+        {
+            "SECRET_KEY": config.secret_key,
+            "JWTSERVICE_RATELIMIT_CREATE": 1,
+            "JWTSERVICE_RATELIMIT_VALIDATE": 5,
+            "JWTSERVICE_ISSUER": config.issuer,
+        }
+    )
+    service = JWTService(config=limited_config, logger=logger)
+    assert service._rate_limiter_create is not None
+    times = [0.0, 61.0]
+
+    def time_fn() -> float:
+        return times.pop(0)
+
+    service._rate_limiter_create._time_fn = time_fn
+
+    service.criar(sub="user@example.com")
+    service.criar(sub="user@example.com")
 
 
 def test_revogar_marks_token_as_revoked(config, logger) -> None:

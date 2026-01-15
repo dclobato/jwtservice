@@ -13,9 +13,11 @@ import json
 import logging
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Type, Union
+from threading import Lock
+from typing import Any, Callable, Deque, Dict, List, Optional, Type, Union
 
 import jwt
 
@@ -59,6 +61,29 @@ class TokenVerificationResult:
     reason: Optional[str] = None
 
 
+class SlidingWindowRateLimiter:
+    """Rate limiter com janela deslizante para operações por minuto."""
+
+    def __init__(self, limit_per_minute: int, time_fn: Callable[[], float] = time.monotonic):
+        if not isinstance(limit_per_minute, int) or limit_per_minute <= 0:
+            raise ValueError("limit_per_minute deve ser um inteiro positivo")
+        self._limit_per_minute = limit_per_minute
+        self._time_fn = time_fn
+        self._lock = Lock()
+        self._timestamps: Deque[float] = deque()
+
+    def allow(self) -> bool:
+        now = self._time_fn()
+        window_start = now - 60.0
+        with self._lock:
+            while self._timestamps and self._timestamps[0] <= window_start:
+                self._timestamps.popleft()
+            if len(self._timestamps) >= self._limit_per_minute:
+                return False
+            self._timestamps.append(now)
+            return True
+
+
 class JWTService:
     """Serviço para criação e validação de tokens JWT."""
 
@@ -84,10 +109,26 @@ class JWTService:
         self._action_enum = action_enum
         self._revocation_store = revocation_store
         self._revocation_ttl_max = revocation_ttl_max
+        self._rate_limiter_create: Optional[SlidingWindowRateLimiter] = None
+        self._rate_limiter_validate: Optional[SlidingWindowRateLimiter] = None
 
         if self._revocation_ttl_max is not None:
             if not isinstance(self._revocation_ttl_max, int) or self._revocation_ttl_max <= 0:
                 raise ValueError("revocation_ttl_max deve ser um inteiro positivo")
+
+        if self._config.rate_limit_create_per_minute == 0:
+            self._logger.warning("JWTSERVICE_RATELIMIT_CREATE=0 (sem limitacao de criacao)")
+        else:
+            self._rate_limiter_create = SlidingWindowRateLimiter(
+                self._config.rate_limit_create_per_minute
+            )
+
+        if self._config.rate_limit_validate_per_minute == 0:
+            self._logger.warning("JWTSERVICE_RATELIMIT_VALIDATE=0 (sem limitacao de validacao)")
+        else:
+            self._rate_limiter_validate = SlidingWindowRateLimiter(
+                self._config.rate_limit_validate_per_minute
+            )
 
         logger.debug("JWTService inicializado com algoritmo: %s", config.algorithm)
 
@@ -117,6 +158,20 @@ class JWTService:
         except (TypeError, ValueError) as exc:
             raise TokenCreationError("extra_data nao e serializavel em JSON") from exc
         return data
+
+    def _enforce_create_rate_limit(self) -> None:
+        if self._rate_limiter_create is None:
+            return
+        if self._rate_limiter_create.allow():
+            return
+        raise TokenCreationError("Rate limit excedido para criacao de token")
+
+    def _enforce_validate_rate_limit(self) -> None:
+        if self._rate_limiter_validate is None:
+            return
+        if self._rate_limiter_validate.allow():
+            return
+        raise TokenValidationError("Rate limit excedido para validacao de token")
 
     def criar(
         self,
@@ -206,6 +261,8 @@ class JWTService:
                 )
                 raise
 
+        self._enforce_create_rate_limit()
+
         try:
             token = jwt.encode(
                 payload=payload,
@@ -249,6 +306,8 @@ class JWTService:
         """
         if not isinstance(token, str) or not token.strip():
             return TokenVerificationResult(valid=False, status="invalid", reason="missing_token")
+
+        self._enforce_validate_rate_limit()
 
         try:
             payload = jwt.decode(
@@ -435,6 +494,8 @@ class TokenConfig:
     audience: Optional[str]
     issuer: str
     leeway: int
+    rate_limit_create_per_minute: int = 6000
+    rate_limit_validate_per_minute: int = 6000
 
     def __post_init__(self) -> None:
         if not isinstance(self.secret_key, str) or not self.secret_key.strip():
@@ -452,6 +513,18 @@ class TokenConfig:
 
         if not isinstance(self.leeway, int) or self.leeway < 0:
             raise ValueError("JWTSERVICE_LEEWAY deve ser um inteiro nao negativo")
+
+        if (
+            not isinstance(self.rate_limit_create_per_minute, int)
+            or self.rate_limit_create_per_minute < 0
+        ):
+            raise ValueError("JWTSERVICE_RATELIMIT_CREATE deve ser um inteiro nao negativo")
+
+        if (
+            not isinstance(self.rate_limit_validate_per_minute, int)
+            or self.rate_limit_validate_per_minute < 0
+        ):
+            raise ValueError("JWTSERVICE_RATELIMIT_VALIDATE deve ser um inteiro nao negativo")
 
         algoritmo = self.algorithm.strip().upper()
         object.__setattr__(self, "algorithm", algoritmo)
@@ -473,6 +546,9 @@ def load_token_config_from_dict(app_config: Dict[str, Any]) -> TokenConfig:
     app_config.setdefault("JWTSERVICE_ALGORITHM", "HS256")
     app_config.setdefault("JWTSERVICE_ISSUER", "JWTService")
     app_config.setdefault("JWTSERVICE_LEEWAY", 0)
+    app_config.setdefault("JWTSERVICE_RATELIMIT", 6000)
+    app_config.setdefault("JWTSERVICE_RATELIMIT_CREATE", app_config.get("JWTSERVICE_RATELIMIT"))
+    app_config.setdefault("JWTSERVICE_RATELIMIT_VALIDATE", app_config.get("JWTSERVICE_RATELIMIT"))
 
     secret_key = app_config.get("SECRET_KEY")
     if secret_key is None:
@@ -488,4 +564,6 @@ def load_token_config_from_dict(app_config: Dict[str, Any]) -> TokenConfig:
         ),
         issuer=str(app_config.get("JWTSERVICE_ISSUER")),
         leeway=int(app_config.get("JWTSERVICE_LEEWAY") or 0),
+        rate_limit_create_per_minute=int(app_config.get("JWTSERVICE_RATELIMIT_CREATE") or 0),
+        rate_limit_validate_per_minute=int(app_config.get("JWTSERVICE_RATELIMIT_VALIDATE") or 0),
     )
