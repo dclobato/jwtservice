@@ -57,6 +57,7 @@ class TokenVerificationResult:
     action: Optional[Enum] = None
     age: Optional[int] = None
     aud: Optional[str] = None
+    jti: Optional[str] = None
     extra_data: Optional[Dict[Any, Any]] = None
     reason: Optional[str] = None
 
@@ -64,7 +65,9 @@ class TokenVerificationResult:
 class SlidingWindowRateLimiter:
     """Rate limiter com janela deslizante para operações por minuto."""
 
-    def __init__(self, limit_per_minute: int, time_fn: Callable[[], float] = time.monotonic):
+    def __init__(
+        self, limit_per_minute: int, time_fn: Callable[[], float] = time.monotonic
+    ):
         if not isinstance(limit_per_minute, int) or limit_per_minute <= 0:
             raise ValueError("limit_per_minute deve ser um inteiro positivo")
         self._limit_per_minute = limit_per_minute
@@ -113,18 +116,25 @@ class JWTService:
         self._rate_limiter_validate: Optional[SlidingWindowRateLimiter] = None
 
         if self._revocation_ttl_max is not None:
-            if not isinstance(self._revocation_ttl_max, int) or self._revocation_ttl_max <= 0:
+            if (
+                not isinstance(self._revocation_ttl_max, int)
+                or self._revocation_ttl_max <= 0
+            ):
                 raise ValueError("revocation_ttl_max deve ser um inteiro positivo")
 
         if self._config.rate_limit_create_per_minute == 0:
-            self._logger.warning("JWTSERVICE_RATELIMIT_CREATE=0 (sem limitacao de criacao)")
+            self._logger.warning(
+                "JWTSERVICE_RATELIMIT_CREATE=0 (sem limitacao de criacao)"
+            )
         else:
             self._rate_limiter_create = SlidingWindowRateLimiter(
                 self._config.rate_limit_create_per_minute
             )
 
         if self._config.rate_limit_validate_per_minute == 0:
-            self._logger.warning("JWTSERVICE_RATELIMIT_VALIDATE=0 (sem limitacao de validacao)")
+            self._logger.warning(
+                "JWTSERVICE_RATELIMIT_VALIDATE=0 (sem limitacao de validacao)"
+            )
         else:
             self._rate_limiter_validate = SlidingWindowRateLimiter(
                 self._config.rate_limit_validate_per_minute
@@ -208,7 +218,9 @@ class JWTService:
         try:
             sub_str = str(sub)
         except Exception as e:
-            raise ValueError(f"sub não pode ser convertido para string: {type(sub)}") from e
+            raise ValueError(
+                f"sub não pode ser convertido para string: {type(sub)}"
+            ) from e
 
         if not sub_str.strip():
             raise ValueError("sub não pode ser vazio")
@@ -257,7 +269,9 @@ class JWTService:
                 payload["extra_data"] = self._ensure_jsonable(extra_data)
             except TokenCreationError:
                 self._logger.exception(
-                    "Falha ao validar extra_data. action=%s sub=%s", action.name, sub_str
+                    "Falha ao validar extra_data. action=%s sub=%s",
+                    action.name,
+                    sub_str,
                 )
                 raise
 
@@ -299,13 +313,15 @@ class JWTService:
 
         Returns:
             TokenVerificationResult: Resultado estruturado da validação contendo status, sub,
-                action, age, aud, extra_data e reason.
+                action, age, aud, jti, extra_data e reason.
 
         Raises:
             TokenValidationError: Se houver falha inesperada ao decodificar o token.
         """
         if not isinstance(token, str) or not token.strip():
-            return TokenVerificationResult(valid=False, status="invalid", reason="missing_token")
+            return TokenVerificationResult(
+                valid=False, status="invalid", reason="missing_token"
+            )
 
         self._enforce_validate_rate_limit()
 
@@ -323,47 +339,69 @@ class JWTService:
             )
         except jwt.ExpiredSignatureError:
             self._logger.info("JWT expirado")
-            return TokenVerificationResult(valid=False, status="expired", reason="expired")
+            return TokenVerificationResult(
+                valid=False, status="expired", reason="expired"
+            )
         except jwt.InvalidSignatureError:
             self._logger.warning("Assinatura inválida no JWT")
-            return TokenVerificationResult(valid=False, status="invalid", reason="bad_signature")
+            return TokenVerificationResult(
+                valid=False, status="invalid", reason="bad_signature"
+            )
         except jwt.ImmatureSignatureError:
             self._logger.warning("JWT ainda não válido (nbf no futuro)")
-            return TokenVerificationResult(valid=False, status="invalid", reason="immature")
+            return TokenVerificationResult(
+                valid=False, status="invalid", reason="immature"
+            )
         except jwt.InvalidIssuerError:
             self._logger.warning("Issuer inválido no JWT")
-            return TokenVerificationResult(valid=False, status="invalid", reason="invalid_issuer")
+            return TokenVerificationResult(
+                valid=False, status="invalid", reason="invalid_issuer"
+            )
         except jwt.InvalidAudienceError:
             self._logger.warning("Audience inválido no JWT")
-            return TokenVerificationResult(valid=False, status="invalid", reason="invalid_audience")
+            return TokenVerificationResult(
+                valid=False, status="invalid", reason="invalid_audience"
+            )
         except jwt.InvalidTokenError:
             self._logger.warning("JWT inválido")
-            return TokenVerificationResult(valid=False, status="invalid", reason="invalid")
+            return TokenVerificationResult(
+                valid=False, status="invalid", reason="invalid"
+            )
         except Exception as e:
             self._logger.exception("Falha inesperada ao decodificar JWT")
             raise TokenValidationError("Falha inesperada ao validar token") from e
 
         sub = payload.get("sub")
         if not isinstance(sub, str) or not sub:
-            return TokenVerificationResult(valid=False, status="invalid", reason="missing_sub")
+            return TokenVerificationResult(
+                valid=False, status="invalid", reason="missing_sub"
+            )
 
         action_raw = payload.get("action", "NO_ACTION")
         if not isinstance(action_raw, str):
-            return TokenVerificationResult(valid=False, status="invalid", reason="invalid_action")
+            return TokenVerificationResult(
+                valid=False, status="invalid", reason="invalid_action"
+            )
 
         try:
             acao = self._action_enum[action_raw]
         except KeyError:
-            return TokenVerificationResult(valid=False, status="invalid", reason="invalid_action")
+            return TokenVerificationResult(
+                valid=False, status="invalid", reason="invalid_action"
+            )
 
         age = None
         if "iat" in payload:
             try:
                 age = self._get_now() - int(payload["iat"])
             except (TypeError, ValueError):
-                return TokenVerificationResult(valid=False, status="invalid", reason="invalid_iat")
+                return TokenVerificationResult(
+                    valid=False, status="invalid", reason="invalid_iat"
+                )
             if age < 0:
-                return TokenVerificationResult(valid=False, status="invalid", reason="invalid_iat")
+                return TokenVerificationResult(
+                    valid=False, status="invalid", reason="invalid_iat"
+                )
 
         extra_data = payload.get("extra_data")
         if extra_data is not None and not isinstance(extra_data, dict):
@@ -374,9 +412,20 @@ class JWTService:
         if self._revocation_store is not None:
             jti = payload.get("jti")
             if not isinstance(jti, str) or not jti.strip():
-                return TokenVerificationResult(valid=False, status="invalid", reason="missing_jti")
+                return TokenVerificationResult(
+                    valid=False, status="invalid", reason="missing_jti"
+                )
             if self._revocation_store.is_revoked(jti):
-                return TokenVerificationResult(valid=False, status="revoked", reason="revoked")
+                return TokenVerificationResult(
+                    valid=False,
+                    status="revoked",
+                    jti=jti,
+                    reason="revoked",
+                )
+        else:
+            jti = payload.get("jti")
+            if not isinstance(jti, str) or not jti.strip():
+                jti = None
 
         aud = payload.get("aud")
         return TokenVerificationResult(
@@ -386,6 +435,7 @@ class JWTService:
             action=acao,
             age=age,
             aud=aud if aud else None,
+            jti=jti,
             extra_data=extra_data,
         )
 
@@ -408,7 +458,9 @@ class JWTService:
             TokenValidationError: Se houver falha inesperada ao decodificar o token.
         """
         if self._revocation_store is None:
-            self._logger.warning("Revogacao solicitada sem revocation_store configurado")
+            self._logger.warning(
+                "Revogacao solicitada sem revocation_store configurado"
+            )
             return False
 
         if not isinstance(token, str) or not token.strip():
@@ -468,7 +520,9 @@ class JWTService:
                 configurado, jti inválido, ou exp já expirado.
         """
         if self._revocation_store is None:
-            self._logger.warning("Revogacao solicitada sem revocation_store configurado")
+            self._logger.warning(
+                "Revogacao solicitada sem revocation_store configurado"
+            )
             return False
 
         if not isinstance(jti, str) or not jti.strip():
@@ -518,13 +572,17 @@ class TokenConfig:
             not isinstance(self.rate_limit_create_per_minute, int)
             or self.rate_limit_create_per_minute < 0
         ):
-            raise ValueError("JWTSERVICE_RATELIMIT_CREATE deve ser um inteiro nao negativo")
+            raise ValueError(
+                "JWTSERVICE_RATELIMIT_CREATE deve ser um inteiro nao negativo"
+            )
 
         if (
             not isinstance(self.rate_limit_validate_per_minute, int)
             or self.rate_limit_validate_per_minute < 0
         ):
-            raise ValueError("JWTSERVICE_RATELIMIT_VALIDATE deve ser um inteiro nao negativo")
+            raise ValueError(
+                "JWTSERVICE_RATELIMIT_VALIDATE deve ser um inteiro nao negativo"
+            )
 
         algoritmo = self.algorithm.strip().upper()
         object.__setattr__(self, "algorithm", algoritmo)
@@ -547,8 +605,12 @@ def load_token_config_from_dict(app_config: Dict[str, Any]) -> TokenConfig:
     app_config.setdefault("JWTSERVICE_ISSUER", "JWTService")
     app_config.setdefault("JWTSERVICE_LEEWAY", 0)
     app_config.setdefault("JWTSERVICE_RATELIMIT", 6000)
-    app_config.setdefault("JWTSERVICE_RATELIMIT_CREATE", app_config.get("JWTSERVICE_RATELIMIT"))
-    app_config.setdefault("JWTSERVICE_RATELIMIT_VALIDATE", app_config.get("JWTSERVICE_RATELIMIT"))
+    app_config.setdefault(
+        "JWTSERVICE_RATELIMIT_CREATE", app_config.get("JWTSERVICE_RATELIMIT")
+    )
+    app_config.setdefault(
+        "JWTSERVICE_RATELIMIT_VALIDATE", app_config.get("JWTSERVICE_RATELIMIT")
+    )
 
     secret_key = app_config.get("SECRET_KEY")
     if secret_key is None:
@@ -564,6 +626,10 @@ def load_token_config_from_dict(app_config: Dict[str, Any]) -> TokenConfig:
         ),
         issuer=str(app_config.get("JWTSERVICE_ISSUER")),
         leeway=int(app_config.get("JWTSERVICE_LEEWAY") or 0),
-        rate_limit_create_per_minute=int(app_config.get("JWTSERVICE_RATELIMIT_CREATE") or 0),
-        rate_limit_validate_per_minute=int(app_config.get("JWTSERVICE_RATELIMIT_VALIDATE") or 0),
+        rate_limit_create_per_minute=int(
+            app_config.get("JWTSERVICE_RATELIMIT_CREATE") or 0
+        ),
+        rate_limit_validate_per_minute=int(
+            app_config.get("JWTSERVICE_RATELIMIT_VALIDATE") or 0
+        ),
     )
