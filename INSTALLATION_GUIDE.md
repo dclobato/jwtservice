@@ -98,6 +98,15 @@ token = service.criar(
 
 print(token)
 print(service.validar(token))
+
+# English aliases are also available
+token2 = service.create(
+    action=JWTAction.VALIDAR_EMAIL,
+    sub="user@example.com",
+    expires_in=600,
+    extra_data={"flow": "signup"},
+)
+print(service.validate(token2))
 ```
 
 Run:

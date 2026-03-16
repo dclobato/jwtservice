@@ -5,6 +5,12 @@
 
 A lightweight JWT creation and validation service. It provides a small, explicit API for creating tokens with actions, expiration, and optional metadata.
 
+Method names are available in both Portuguese and English aliases:
+- `criar` / `create`
+- `validar` / `validate`
+- `revogar` / `revoke`
+- `revogar_jti` / `revoke_jti`
+
 ## Features
 
 - Simple service class for create/validate flows
@@ -59,16 +65,16 @@ config = load_token_config_from_dict(
 logger = logging.getLogger("jwt")
 service = JWTService(config=config, logger=logger)
 
-# Create token
-token = service.criar(
+# Create token (Portuguese or English aliases)
+token = service.create(
     action=JWTAction.VALIDAR_EMAIL,
     sub="user@example.com",
     expires_in=600,
     extra_data={"flow": "signup"},
 )
 
-# Validate token
-result = service.validar(token)
+# Validate token (Portuguese or English aliases)
+result = service.validate(token)
 print(f"Valid: {result.valid}")
 print(f"Status: {result.status}")
 print(f"Subject: {result.sub}")
@@ -121,7 +127,7 @@ Override the default audience when creating a token:
 
 ```python
 # Create token with specific audience
-token = service.criar(
+token = service.create(
     sub="user@example.com",
     audience="mobile-app",  # Overrides config audience
 )
@@ -135,10 +141,10 @@ When validating, you can provide:
 
 ```python
 # Validate with single audience
-result = service.validar(token, audience="mobile-app")
+result = service.validate(token, audience="mobile-app")
 
 # Validate with multiple possible audiences
-result = service.validar(token, audience=["web-app", "mobile-app", "admin-panel"])
+result = service.validate(token, audience=["web-app", "mobile-app", "admin-panel"])
 ```
 
 If no audience is provided during validation, the config audience is used (if set).
@@ -172,7 +178,7 @@ config = load_token_config_from_dict(
 logger = logging.getLogger("jwt")
 service = JWTService(config=config, logger=logger, action_enum=MyAction)
 
-token = service.criar(action=MyAction.SIGNUP, sub="user@example.com")
+token = service.create(action=MyAction.SIGNUP, sub="user@example.com")
 ```
 
 ## Flask Integration (Optional)
@@ -194,7 +200,7 @@ The service stores the following fields:
 - `nbf`: not before (UTC timestamp)
 - `exp`: expiration (only when `expires_in > 0`)
 - `iss`: issuer (from config)
-- `aud`: audience (from config or from call to `criar`, or None)
+- `aud`: audience (from config or from call to `create`/`criar`, or None)
 - `action`: enum name
 - `jti`: unique token identifier (UUID v4)
 - `extra_data`: optional dict
@@ -231,10 +237,10 @@ from jwtservice import InMemoryRevocationStore, JWTService
 store = InMemoryRevocationStore()
 service = JWTService(config=config, logger=logger, revocation_store=store)
 
-token = service.criar(sub="user@example.com")
-service.revogar(token, reason="logout")
+token = service.create(sub="user@example.com")
+service.revoke(token, reason="logout")
 
-result = service.validar(token)
+result = service.validate(token)
 print(result.status)  # "revoked"
 ```
 
@@ -250,14 +256,14 @@ service = JWTService(config=config, logger=logger, revocation_store=store)
 You can also revoke by jti/exp if you have those values in logs:
 
 ```python
-service.revogar_jti(jti="...", exp=1710000000, reason="incident")
+service.revoke_jti(jti="...", exp=1710000000, reason="incident")
 ```
 
 **See also**: `examples/revocation_usage.py` for in-memory and SQLite examples.
 
 ## Error Reasons
 
-`JWTService.validar` returns a `TokenVerificationResult` with a `reason` when invalid:
+`JWTService.validate`/`JWTService.validar` return a `TokenVerificationResult` with a `reason` when invalid:
 
 When `status` is `"valid"` or `"revoked"`, `TokenVerificationResult.jti` includes the token `jti`
 claim.

@@ -61,9 +61,7 @@ def test_create_token_auto_jti_logs_debug(config, logger, caplog) -> None:
     service = JWTService(config=config, logger=logger)
     service.criar(sub="user@example.com")
 
-    assert any(
-        "jti gerado automaticamente" in record.message for record in caplog.records
-    )
+    assert any("jti gerado automaticamente" in record.message for record in caplog.records)
 
 
 def test_create_rejects_empty_jti(config, logger) -> None:
@@ -82,6 +80,68 @@ def test_create_without_action_defaults_to_no_action(config, logger) -> None:
     assert result.valid is True
     assert result.status == "valid"
     assert result.action == JWTAction.NO_ACTION
+
+
+def test_create_alias_matches_criar(config, logger) -> None:
+    service = JWTService(config=config, logger=logger)
+
+    token_pt = service.criar(
+        action=JWTAction.VALIDAR_EMAIL,
+        sub="user@example.com",
+        expires_in=300,
+        audience="api-service",
+        jti="same-jti",
+        extra_data={"flow": "signup"},
+    )
+    token_en = service.create(
+        action=JWTAction.VALIDAR_EMAIL,
+        sub="user@example.com",
+        expires_in=300,
+        audience="api-service",
+        jti="same-jti",
+        extra_data={"flow": "signup"},
+    )
+
+    assert token_en == token_pt
+
+
+def test_validate_alias_matches_validar(config, logger) -> None:
+    service = JWTService(config=config, logger=logger)
+    token = service.criar(
+        action=JWTAction.RESET_PASSWORD,
+        sub="user@example.com",
+        jti="alias-jti",
+        extra_data={"flow": "reset"},
+    )
+
+    result_pt = service.validar(token)
+    result_en = service.validate(token)
+
+    assert result_en == result_pt
+
+
+def test_revoke_alias_matches_revogar(config, logger) -> None:
+    store = InMemoryRevocationStore()
+    service = JWTService(config=config, logger=logger, revocation_store=store)
+
+    token_pt = service.criar(sub="user@example.com", jti="revoke-pt")
+    token_en = service.create(sub="user@example.com", jti="revoke-en")
+
+    assert service.revogar(token_pt, reason="logout") is True
+    assert service.revoke(token_en, reason="logout") is True
+    assert store.is_revoked("revoke-pt") is True
+    assert store.is_revoked("revoke-en") is True
+
+
+def test_revoke_jti_alias_matches_revogar_jti(config, logger) -> None:
+    store = InMemoryRevocationStore()
+    service = JWTService(config=config, logger=logger, revocation_store=store)
+    now = int(time.time())
+
+    assert service.revogar_jti("alias-jti-pt", now + 60, reason="incident") is True
+    assert service.revoke_jti("alias-jti-en", now + 60, reason="incident") is True
+    assert store.is_revoked("alias-jti-pt") is True
+    assert store.is_revoked("alias-jti-en") is True
 
 
 def test_invalid_signature_returns_reason(logger) -> None:
@@ -545,12 +605,8 @@ def test_rate_limit_unlimited_logs_warning(logger, caplog) -> None:
 
     JWTService(config=config, logger=logger)
 
-    assert any(
-        "JWTSERVICE_RATELIMIT_CREATE=0" in record.message for record in caplog.records
-    )
-    assert any(
-        "JWTSERVICE_RATELIMIT_VALIDATE=0" in record.message for record in caplog.records
-    )
+    assert any("JWTSERVICE_RATELIMIT_CREATE=0" in record.message for record in caplog.records)
+    assert any("JWTSERVICE_RATELIMIT_VALIDATE=0" in record.message for record in caplog.records)
 
 
 def test_rate_limit_unlimited_allows_operations(logger) -> None:
@@ -956,9 +1012,7 @@ def test_revogar_jti_includes_leeway_in_ttl(logger) -> None:
         }
     )
     store = CaptureStore()
-    service = JWTService(
-        config=config_with_leeway, logger=logger, revocation_store=store
-    )
+    service = JWTService(config=config_with_leeway, logger=logger, revocation_store=store)
     now = int(time.time())
 
     # Token expires in 60 seconds from now
@@ -991,9 +1045,7 @@ def test_revogar_includes_leeway_in_ttl(logger) -> None:
         }
     )
     store = CaptureStore()
-    service = JWTService(
-        config=config_with_leeway, logger=logger, revocation_store=store
-    )
+    service = JWTService(config=config_with_leeway, logger=logger, revocation_store=store)
     now = int(time.time())
 
     # Create a token that expires in 60 seconds
