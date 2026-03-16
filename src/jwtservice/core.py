@@ -57,9 +57,9 @@ class TokenVerificationResult:
     action: Optional[Enum] = None
     age: Optional[int] = None
     aud: Optional[str] = None
-    jti: Optional[str] = None
     extra_data: Optional[Dict[Any, Any]] = None
     reason: Optional[str] = None
+    jti: Optional[str] = None
 
 
 class SlidingWindowRateLimiter:
