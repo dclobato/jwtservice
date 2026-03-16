@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "jwtservice"
-version = "1.0.1"
+version = "1.0.2"
 description = "JWT token creation and validation without Flask dependencies"
 readme = "README.md"
 authors = [
