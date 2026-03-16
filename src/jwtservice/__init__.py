@@ -10,7 +10,11 @@ from jwtservice.core import (
     TokenVerificationResult,
     load_token_config_from_dict,
 )
-from jwtservice.revocation import InMemoryRevocationStore, RevocationStore, SQLiteRevocationStore
+from jwtservice.revocation import (
+    InMemoryRevocationStore,
+    RevocationStore,
+    SQLiteRevocationStore,
+)
 
 __all__ = [
     "__version__",
@@ -27,4 +31,4 @@ __all__ = [
     "SQLiteRevocationStore",
 ]
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"

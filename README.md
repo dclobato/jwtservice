@@ -73,6 +73,7 @@ print(f"Valid: {result.valid}")
 print(f"Status: {result.status}")
 print(f"Subject: {result.sub}")
 print(f"Action: {result.action}")
+print(f"JTI: {result.jti}")
 ```
 
 ## Configuration Options
@@ -257,6 +258,9 @@ service.revogar_jti(jti="...", exp=1710000000, reason="incident")
 ## Error Reasons
 
 `JWTService.validar` returns a `TokenVerificationResult` with a `reason` when invalid:
+
+When `status` is `"valid"` or `"revoked"`, `TokenVerificationResult.jti` includes the token `jti`
+claim.
 
 - `missing_sub` - Token is missing the subject claim
 - `missing_token` - No token provided or empty token
