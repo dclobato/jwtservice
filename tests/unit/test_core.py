@@ -61,19 +61,17 @@ def test_create_token_auto_jti_logs_debug(config, logger, caplog) -> None:
     service = JWTService(config=config, logger=logger)
     service.criar(sub="user@example.com")
 
-    assert any(
-        "jti gerado automaticamente" in record.message for record in caplog.records
-    )
+    assert any("jti generated automatically" in record.message for record in caplog.records)
 
 
 def test_create_rejects_empty_jti(config, logger) -> None:
     service = JWTService(config=config, logger=logger)
 
-    with pytest.raises(ValueError, match="jti deve ser uma string nao vazia"):
+    with pytest.raises(ValueError, match="jti must be a non-empty string"):
         service.criar(sub="user@example.com", jti=" ")
 
 
-def test_create_without_action_defaults_to_no_action(config, logger) -> None:
+def test_create_without_action_returns_none_action(config, logger) -> None:
     service = JWTService(config=config, logger=logger)
     token = service.criar(sub="user@example.com")
 
@@ -81,7 +79,22 @@ def test_create_without_action_defaults_to_no_action(config, logger) -> None:
 
     assert result.valid is True
     assert result.status == "valid"
-    assert result.action == JWTAction.NO_ACTION
+    assert result.action is None
+
+
+def test_create_without_action_omits_action_claim(config, logger) -> None:
+    service = JWTService(config=config, logger=logger)
+    token = service.criar(sub="user@example.com", jti="no-action-jti")
+
+    payload = jwt.decode(
+        token,
+        key=config.secret_key,
+        algorithms=[config.algorithm],
+        issuer=config.issuer,
+        options={"verify_aud": False},
+    )
+
+    assert "action" not in payload
 
 
 def test_create_alias_matches_criar(config, logger, monkeypatch) -> None:
@@ -204,14 +217,14 @@ def test_invalid_action_returns_reason(config, logger) -> None:
 def test_create_requires_sub(config, logger) -> None:
     service = JWTService(config=config, logger=logger)
 
-    with pytest.raises(ValueError, match="sub deve ser informado"):
+    with pytest.raises(ValueError, match="sub must be provided"):
         service.criar()
 
 
 def test_create_rejects_empty_sub(config, logger) -> None:
     service = JWTService(config=config, logger=logger)
 
-    with pytest.raises(ValueError, match="sub .* vazio"):
+    with pytest.raises(ValueError, match="sub .* empty"):
         service.criar(sub=" ")
 
 
@@ -222,35 +235,35 @@ def test_create_rejects_unstringable_sub(config, logger) -> None:
 
     service = JWTService(config=config, logger=logger)
 
-    with pytest.raises(ValueError, match="sub .* convertido"):
+    with pytest.raises(ValueError, match="sub .* converted"):
         service.criar(sub=BadStr())
 
 
 def test_create_rejects_invalid_expires_in(config, logger) -> None:
     service = JWTService(config=config, logger=logger)
 
-    with pytest.raises(ValueError, match="expires_in deve ser int"):
+    with pytest.raises(ValueError, match="expires_in must be an int"):
         service.criar(sub="user@example.com", expires_in="10")  # type: ignore[arg-type]
 
 
 def test_create_rejects_invalid_action_type(config, logger) -> None:
     service = JWTService(config=config, logger=logger)
 
-    with pytest.raises(ValueError, match="action deve ser Enum"):
+    with pytest.raises(ValueError, match="action must be an Enum"):
         service.criar(sub="user@example.com", action="x")  # type: ignore[arg-type]
 
 
 def test_create_rejects_invalid_extra_data_type(config, logger) -> None:
     service = JWTService(config=config, logger=logger)
 
-    with pytest.raises(ValueError, match="extra_data deve ser dict"):
+    with pytest.raises(ValueError, match="extra_data must be a dict"):
         service.criar(sub="user@example.com", extra_data=["x"])  # type: ignore[arg-type]
 
 
 def test_create_rejects_non_jsonable_extra_data(config, logger) -> None:
     service = JWTService(config=config, logger=logger)
 
-    with pytest.raises(TokenCreationError, match="extra_data nao e serializavel"):
+    with pytest.raises(TokenCreationError, match="extra_data is not JSON-serializable"):
         service.criar(sub="user@example.com", extra_data={"bad": {1, 2}})
 
 
@@ -262,7 +275,7 @@ def test_create_handles_encode_errors(config, logger, monkeypatch) -> None:
 
     monkeypatch.setattr(jwt, "encode", raise_type_error)
 
-    with pytest.raises(TokenCreationError, match="Falha ao gerar token"):
+    with pytest.raises(TokenCreationError, match="Failed to generate token"):
         service.criar(sub="user@example.com")
 
 
@@ -274,7 +287,7 @@ def test_create_handles_unexpected_encode_errors(config, logger, monkeypatch) ->
 
     monkeypatch.setattr(jwt, "encode", raise_unexpected)
 
-    with pytest.raises(TokenCreationError, match="Falha inesperada ao gerar token"):
+    with pytest.raises(TokenCreationError, match="Unexpected failure while generating token"):
         service.criar(sub="user@example.com")
 
 
@@ -400,7 +413,7 @@ def test_validate_internal_error(config, logger, monkeypatch) -> None:
 
     monkeypatch.setattr(jwt, "decode", raise_unexpected)
 
-    with pytest.raises(TokenValidationError, match="Falha inesperada ao validar token"):
+    with pytest.raises(TokenValidationError, match="Unexpected failure while validating token"):
         service.validar("token")
 
 
@@ -543,14 +556,14 @@ def test_validate_token_audience_mismatch(config, logger) -> None:
 def test_create_rejects_empty_audience(config, logger) -> None:
     service = JWTService(config=config, logger=logger)
 
-    with pytest.raises(ValueError, match="audience deve ser uma string não vazia"):
+    with pytest.raises(ValueError, match="audience must be a non-empty string"):
         service.criar(sub="user@example.com", audience=" ")
 
 
 def test_create_rejects_non_string_audience(config, logger) -> None:
     service = JWTService(config=config, logger=logger)
 
-    with pytest.raises(ValueError, match="audience deve ser uma string não vazia"):
+    with pytest.raises(ValueError, match="audience must be a non-empty string"):
         service.criar(sub="user@example.com", audience=123)  # type: ignore[arg-type]
 
 
@@ -608,12 +621,8 @@ def test_rate_limit_unlimited_logs_warning(logger, caplog) -> None:
 
     JWTService(config=config, logger=logger)
 
-    assert any(
-        "JWTSERVICE_RATELIMIT_CREATE=0" in record.message for record in caplog.records
-    )
-    assert any(
-        "JWTSERVICE_RATELIMIT_VALIDATE=0" in record.message for record in caplog.records
-    )
+    assert any("JWTSERVICE_RATELIMIT_CREATE=0" in record.message for record in caplog.records)
+    assert any("JWTSERVICE_RATELIMIT_VALIDATE=0" in record.message for record in caplog.records)
 
 
 def test_rate_limit_unlimited_allows_operations(logger) -> None:
@@ -673,7 +682,7 @@ def test_rate_limit_blocks_create(config, logger) -> None:
     service._rate_limiter_create._time_fn = lambda: 1000.0
 
     service.criar(sub="user@example.com")
-    with pytest.raises(TokenCreationError, match="Rate limit excedido"):
+    with pytest.raises(TokenCreationError, match="Rate limit exceeded"):
         service.criar(sub="user@example.com")
 
 
@@ -692,7 +701,7 @@ def test_rate_limit_blocks_validation(config, logger) -> None:
 
     token = service.criar(sub="user@example.com")
     assert service.validar(token).valid is True
-    with pytest.raises(TokenValidationError, match="Rate limit excedido"):
+    with pytest.raises(TokenValidationError, match="Rate limit exceeded"):
         service.validar(token)
 
 
@@ -896,7 +905,7 @@ def test_revogar_unexpected_decode_error_raises(config, logger, monkeypatch) -> 
 
     monkeypatch.setattr(jwt, "decode", raise_unexpected)
 
-    with pytest.raises(TokenValidationError, match="Falha inesperada ao validar token"):
+    with pytest.raises(TokenValidationError, match="Unexpected failure while validating token"):
         service.revogar("token")
 
 
@@ -1009,7 +1018,7 @@ def test_revogar_jti_includes_leeway_in_ttl(logger) -> None:
             self.last_ttl = ttl_seconds
             return True
 
-    # Create config with leeway=10
+    # Create config with leeway=10.
     config_with_leeway = load_token_config_from_dict(
         {
             "SECRET_KEY": "test-secret",
@@ -1019,14 +1028,12 @@ def test_revogar_jti_includes_leeway_in_ttl(logger) -> None:
         }
     )
     store = CaptureStore()
-    service = JWTService(
-        config=config_with_leeway, logger=logger, revocation_store=store
-    )
+    service = JWTService(config=config_with_leeway, logger=logger, revocation_store=store)
     now = int(time.time())
 
-    # Token expires in 60 seconds from now
+    # Token expires in 60 seconds from now.
     assert service.revogar_jti("jti-1", now + 60) is True
-    # TTL should be 60 (exp - now) + 10 (leeway) = 70
+    # TTL should be 60 (exp - now) + 10 (leeway) = 70.
     assert store.last_ttl == 70
 
 
@@ -1044,7 +1051,7 @@ def test_revogar_includes_leeway_in_ttl(logger) -> None:
             self.last_ttl = ttl_seconds
             return True
 
-    # Create config with leeway=10
+    # Create config with leeway=10.
     config_with_leeway = load_token_config_from_dict(
         {
             "SECRET_KEY": "test-secret",
@@ -1054,12 +1061,10 @@ def test_revogar_includes_leeway_in_ttl(logger) -> None:
         }
     )
     store = CaptureStore()
-    service = JWTService(
-        config=config_with_leeway, logger=logger, revocation_store=store
-    )
+    service = JWTService(config=config_with_leeway, logger=logger, revocation_store=store)
     now = int(time.time())
 
-    # Create a token that expires in 60 seconds
+    # Create a token that expires in 60 seconds.
     payload = {
         "sub": "user@example.com",
         "iat": now,
@@ -1074,7 +1079,7 @@ def test_revogar_includes_leeway_in_ttl(logger) -> None:
         algorithm=config_with_leeway.algorithm,
     )
 
-    # Revoke the token
+    # Revoke the token.
     assert service.revogar(token) is True
-    # TTL should be 60 (exp - now) + 10 (leeway) = 70
+    # TTL should be 60 (exp - now) + 10 (leeway) = 70.
     assert store.last_ttl == 70

@@ -15,7 +15,7 @@ def main() -> None:
     logger = logging.getLogger("jwt")
     service = JWTService(config=config, logger=logger)
 
-    token = service.criar(
+    token = service.create(
         action=JWTAction.VALIDAR_EMAIL,
         sub="user@example.com",
         expires_in=600,
@@ -23,7 +23,7 @@ def main() -> None:
     )
 
     print("token:", token)
-    print("result:", service.validar(token))
+    print("result:", service.validate(token))
 
 
 if __name__ == "__main__":

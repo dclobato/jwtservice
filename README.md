@@ -3,7 +3,7 @@
 [![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-A lightweight JWT creation and validation service. It provides a small, explicit API for creating tokens with actions, expiration, and optional metadata.
+A lightweight JWT creation and validation service. It provides a small, explicit API for creating tokens with optional actions, expiration, and optional metadata.
 
 Method names are available in both Portuguese and English aliases:
 - `criar` / `create`
@@ -11,10 +11,25 @@ Method names are available in both Portuguese and English aliases:
 - `revogar` / `revoke`
 - `revogar_jti` / `revoke_jti`
 
+## Breaking Change in 2.0.0
+
+Starting in `2.0.0`, `create`/`criar` no longer add an `action` claim when no action is provided.
+
+Previous behavior:
+- Tokens created without an explicit action behaved as if they had `action=NO_ACTION`
+- `validate`/`validar` returned `result.action == JWTAction.NO_ACTION`
+
+Current behavior:
+- Tokens created without an explicit action do not contain an `action` claim
+- `validate`/`validar` return `result.action is None`
+
+If your code previously depended on `JWTAction.NO_ACTION` as the default validation result,
+update it to handle `None` explicitly.
+
 ## Features
 
 - Simple service class for create/validate flows
-- Action enum to tag token purpose (email validation, password reset, etc)
+- Optional action enum to tag token purpose (email validation, password reset, etc.)
 - Explicit configuration loader for dict-based settings
 - Optional extra payload data
 - Consistent error reasons for invalid tokens
@@ -65,7 +80,7 @@ config = load_token_config_from_dict(
 logger = logging.getLogger("jwt")
 service = JWTService(config=config, logger=logger)
 
-# Create token (Portuguese or English aliases)
+# Create token
 token = service.create(
     action=JWTAction.VALIDAR_EMAIL,
     sub="user@example.com",
@@ -73,7 +88,10 @@ token = service.create(
     extra_data={"flow": "signup"},
 )
 
-# Validate token (Portuguese or English aliases)
+# Or create a token without an action claim
+token_without_action = service.create(sub="user@example.com")
+
+# Validate token
 result = service.validate(token)
 print(f"Valid: {result.valid}")
 print(f"Status: {result.status}")
@@ -81,6 +99,9 @@ print(f"Subject: {result.sub}")
 print(f"Action: {result.action}")
 print(f"JTI: {result.jti}")
 ```
+
+If no `action` is provided to `create`/`criar`, the token is generated without an `action`
+claim, and `validate`/`validar` return `action=None`.
 
 ## Configuration Options
 
@@ -153,7 +174,7 @@ If no audience is provided during validation, the config audience is used (if se
 
 ## Custom Action Enum
 
-If you want to replace the default action enum:
+If you want to replace the default action enum used for optional action-tagged tokens:
 
 ```python
 import logging
@@ -163,7 +184,6 @@ from jwtservice import JWTService, load_token_config_from_dict
 
 
 class MyAction(Enum):
-    NO_ACTION = 0
     SIGNUP = 1
     LOGIN = 2
 
@@ -200,8 +220,8 @@ The service stores the following fields:
 - `nbf`: not before (UTC timestamp)
 - `exp`: expiration (only when `expires_in > 0`)
 - `iss`: issuer (from config)
-- `aud`: audience (from config or from call to `create`/`criar`, or None)
-- `action`: enum name
+- `aud`: audience (from config or from a call to `create` or `criar`, or `None`)
+- `action`: enum name, only when an action was provided during token creation
 - `jti`: unique token identifier (UUID v4)
 - `extra_data`: optional dict
 
@@ -278,7 +298,7 @@ claim.
 - `invalid_audience` - Audience claim doesn't match expected value(s)
 - `invalid_iat` - Invalid issued at timestamp
 - `invalid` - Token is malformed or invalid
-- `invalid_action` - Action is not a valid enum value
+- `invalid_action` - Action claim is present but is not a valid enum value
 - `revoked` - Token has been revoked
 
 ## Contributing

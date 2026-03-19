@@ -89,7 +89,7 @@ config = load_token_config_from_dict(
 logger = logging.getLogger("jwt")
 service = JWTService(config=config, logger=logger)
 
-token = service.criar(
+token = service.create(
     action=JWTAction.VALIDAR_EMAIL,
     sub="user@example.com",
     expires_in=600,
@@ -97,7 +97,7 @@ token = service.criar(
 )
 
 print(token)
-print(service.validar(token))
+print(service.validate(token))
 
 # English aliases are also available
 token2 = service.create(

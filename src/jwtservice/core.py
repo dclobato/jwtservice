@@ -1,12 +1,13 @@
-"""Serviço de geração e validação de tokens JWT.
+"""JWT token generation and validation service.
 
-Este módulo fornece funcionalidades para criação e verificação de tokens JWT
-usados para validação de email, reset de senha e autenticação temporária.
+This module provides functionality for creating and verifying JWT tokens
+used for email validation, password reset, temporary authentication, and
+other optional action-tagged flows.
 
-Classes principais:
-    - JWTService: Serviço para criação e validação de tokens JWT
-    - JWT_action: Enum com tipos de ações de tokens
-    - TokenVerificationResult: Dataclass com resultado de verificação de token
+Main classes:
+    - JWTService: Service for creating and validating JWT tokens
+    - JWTAction: Enum with token action types
+    - TokenVerificationResult: Dataclass with the token verification result
 """
 
 import json
@@ -25,7 +26,7 @@ from jwtservice.revocation import RevocationStore
 
 
 class JWTAction(Enum):
-    """Enumeração que define as ações possíveis para tokens JWT."""
+    """Enumeration that defines the possible actions for JWT tokens."""
 
     NO_ACTION = 0
     VALIDAR_EMAIL = 1
@@ -36,20 +37,24 @@ class JWTAction(Enum):
 
 
 class JWTServiceError(Exception):
-    """Erro base para o JWTService."""
+    """Base error for JWTService."""
 
 
 class TokenCreationError(JWTServiceError):
-    """Lançado quando um token JWT não pode ser criado."""
+    """Raised when a JWT token cannot be created."""
 
 
 class TokenValidationError(JWTServiceError):
-    """Lançado quando um token JWT não pode ser validado."""
+    """Raised when a JWT token cannot be validated."""
 
 
 @dataclass
 class TokenVerificationResult:
-    """Resultado da verificação de um token JWT."""
+    """Result of JWT token verification.
+
+    The ``action`` field is ``None`` when the token does not include an
+    ``action`` claim.
+    """
 
     valid: bool
     status: str
@@ -63,11 +68,11 @@ class TokenVerificationResult:
 
 
 class SlidingWindowRateLimiter:
-    """Rate limiter com janela deslizante para operações por minuto."""
+    """Sliding-window rate limiter for per-minute operations."""
 
     def __init__(self, limit_per_minute: int, time_fn: Callable[[], float] = time.monotonic):
         if not isinstance(limit_per_minute, int) or limit_per_minute <= 0:
-            raise ValueError("limit_per_minute deve ser um inteiro positivo")
+            raise ValueError("limit_per_minute must be a positive integer")
         self._limit_per_minute = limit_per_minute
         self._time_fn = time_fn
         self._lock = Lock()
@@ -86,7 +91,7 @@ class SlidingWindowRateLimiter:
 
 
 class JWTService:
-    """Serviço para criação e validação de tokens JWT."""
+    """Service for creating and validating JWT tokens."""
 
     def __init__(
         self,
@@ -96,14 +101,14 @@ class JWTService:
         revocation_store: Optional[RevocationStore] = None,
         revocation_ttl_max: Optional[int] = None,
     ) -> None:
-        """Inicializa o serviço de tokens.
+        """Initialize the token service.
 
         Args:
-            config (TokenConfig): Configurações validadas.
-            logger: Logger do serviço.
-            action_enum (Type[Enum]): Enum para ações do token.
-            revocation_store: Backend opcional para revogação de tokens.
-            revocation_ttl_max: Limite máximo de TTL em segundos para revogações.
+            config (TokenConfig): Validated configuration.
+            logger: Service logger.
+            action_enum (Type[Enum]): Enum for token actions.
+            revocation_store: Optional backend for token revocation.
+            revocation_ttl_max: Maximum TTL limit in seconds for revocations.
         """
         self._config = config
         self._logger = logger
@@ -115,23 +120,23 @@ class JWTService:
 
         if self._revocation_ttl_max is not None:
             if not isinstance(self._revocation_ttl_max, int) or self._revocation_ttl_max <= 0:
-                raise ValueError("revocation_ttl_max deve ser um inteiro positivo")
+                raise ValueError("revocation_ttl_max must be a positive integer")
 
         if self._config.rate_limit_create_per_minute == 0:
-            self._logger.warning("JWTSERVICE_RATELIMIT_CREATE=0 (sem limitacao de criacao)")
+            self._logger.warning("JWTSERVICE_RATELIMIT_CREATE=0 (token creation unlimited)")
         else:
             self._rate_limiter_create = SlidingWindowRateLimiter(
                 self._config.rate_limit_create_per_minute
             )
 
         if self._config.rate_limit_validate_per_minute == 0:
-            self._logger.warning("JWTSERVICE_RATELIMIT_VALIDATE=0 (sem limitacao de validacao)")
+            self._logger.warning("JWTSERVICE_RATELIMIT_VALIDATE=0 (token validation unlimited)")
         else:
             self._rate_limiter_validate = SlidingWindowRateLimiter(
                 self._config.rate_limit_validate_per_minute
             )
 
-        logger.debug("JWTService inicializado com algoritmo: %s", config.algorithm)
+        logger.debug("JWTService initialized with algorithm: %s", config.algorithm)
 
     def _get_now(self) -> int:
         return int(time.time())
@@ -142,22 +147,22 @@ class JWTService:
         return min(ttl_seconds, self._revocation_ttl_max)
 
     def _ensure_jsonable(self, data: Any) -> Any:
-        """Valida que os dados podem ser serializados em JSON sem transformá-los.
+        """Validate that the data can be JSON-serialized without transforming it.
 
         Args:
-            data (Any): Dados a serem validados.
+            data (Any): Data to validate.
 
         Returns:
-            Any: Os mesmos dados se forem serializáveis.
+            Any: The same data if it is serializable.
 
         Raises:
-            TokenCreationError: Se os dados não forem serializáveis em JSON.
+            TokenCreationError: If the data is not JSON-serializable.
         """
-        # Valida sem transformar, só garante serialização.
+        # Validate without transforming, only ensure serializability.
         try:
             json.dumps(data, separators=(",", ":"), ensure_ascii=False)
         except (TypeError, ValueError) as exc:
-            raise TokenCreationError("extra_data nao e serializavel em JSON") from exc
+            raise TokenCreationError("extra_data is not JSON-serializable") from exc
         return data
 
     def _enforce_create_rate_limit(self) -> None:
@@ -165,14 +170,14 @@ class JWTService:
             return
         if self._rate_limiter_create.allow():
             return
-        raise TokenCreationError("Rate limit excedido para criacao de token")
+        raise TokenCreationError("Rate limit exceeded for token creation")
 
     def _enforce_validate_rate_limit(self) -> None:
         if self._rate_limiter_validate is None:
             return
         if self._rate_limiter_validate.allow():
             return
-        raise TokenValidationError("Rate limit excedido para validacao de token")
+        raise TokenValidationError("Rate limit exceeded for token validation")
 
     def criar(
         self,
@@ -183,83 +188,83 @@ class JWTService:
         jti: Optional[str] = None,
         extra_data: Optional[Dict[Any, Any]] = None,
     ) -> str:
-        """Cria um token JWT com as claims fornecidas.
+        """Create a JWT token with the provided claims.
 
         Args:
-            action (Optional[Enum]): Ação do token (usa NO_ACTION se não fornecido).
-            sub (Any): Subject identifier (identificador do usuário/entidade).
-            expires_in (int): Tempo de expiração em segundos (padrão: 600).
-            audience (Optional[str]): Audience do token (string).
-            jti (Optional[str]): JWT ID opcional. Se não fornecido, será gerado automaticamente.
-            extra_data (Optional[Dict[Any, Any]]): Dados extras para incluir no payload.
+            action (Optional[Enum]): Optional token action. The ``action`` claim is only
+                included in the token when this argument is provided.
+            sub (Any): Subject identifier (user/entity identifier).
+            expires_in (int): Expiration time in seconds (default: 600).
+            audience (Optional[str]): Token audience (string).
+            jti (Optional[str]): Optional JWT ID. If not provided, one is generated automatically.
+            extra_data (Optional[Dict[Any, Any]]): Extra data to include in the payload.
 
         Returns:
-            str: Token JWT codificado como string.
+            str: JWT token encoded as a string.
 
         Raises:
-            ValueError: Se sub for None, vazio, não conversível para string, ou se expires_in não
-                for int, ou se action não for Enum, ou se jti for inválido, ou se audience for
-                inválido, ou se extra_data não for dict.
-            TokenCreationError: Se houver falha ao codificar o token ou se extra_data não for
-                serializável em JSON.
+            ValueError: If sub is None, empty, not convertible to string, if expires_in is not
+                an int, if action is provided and is not an Enum, if jti is invalid, if
+                audience is invalid, or if extra_data is not a dict.
+            TokenCreationError: If token encoding fails or extra_data is not JSON-serializable.
         """
         if sub is None:
-            raise ValueError("sub deve ser informado")
+            raise ValueError("sub must be provided")
 
         try:
             sub_str = str(sub)
         except Exception as e:
-            raise ValueError(f"sub não pode ser convertido para string: {type(sub)}") from e
+            raise ValueError(f"sub cannot be converted to string: {type(sub)}") from e
 
         if not sub_str.strip():
-            raise ValueError("sub não pode ser vazio")
+            raise ValueError("sub cannot be empty")
 
         if not isinstance(expires_in, int):
-            raise ValueError("expires_in deve ser int")
+            raise ValueError("expires_in must be an int")
 
-        agora = self._get_now()
-        if action is None:
-            action = getattr(self._action_enum, JWTAction.NO_ACTION.name)
-
-        if not isinstance(action, Enum):
-            raise ValueError("action deve ser Enum")
+        now = self._get_now()
+        if action is not None and not isinstance(action, Enum):
+            raise ValueError("action must be an Enum")
 
         if jti is not None:
             if not isinstance(jti, str) or not jti.strip():
-                raise ValueError("jti deve ser uma string nao vazia")
+                raise ValueError("jti must be a non-empty string")
             jti_value = jti
         else:
             jti_value = str(uuid.uuid4())
-            self._logger.debug("jti gerado automaticamente: %s", jti_value)
+            self._logger.debug("jti generated automatically: %s", jti_value)
+
+        action_name = action.name if isinstance(action, Enum) else None
 
         payload: Dict[str, Any] = {
             "sub": sub_str,
-            "iat": agora,
-            "nbf": agora,
+            "iat": now,
+            "nbf": now,
             "iss": self._config.issuer,
-            "action": action.name,
             "jti": jti_value,
         }
+        if action is not None:
+            payload["action"] = action.name
 
         if expires_in > 0:
-            payload["exp"] = agora + expires_in
+            payload["exp"] = now + expires_in
 
         if audience:
             if not isinstance(audience, str) or not audience.strip():
-                raise ValueError("audience deve ser uma string não vazia")
+                raise ValueError("audience must be a non-empty string")
             payload["aud"] = audience
         elif self._config.audience:
             payload["aud"] = self._config.audience
 
         if extra_data is not None:
             if not isinstance(extra_data, dict):
-                raise ValueError("extra_data deve ser dict")
+                raise ValueError("extra_data must be a dict")
             try:
                 payload["extra_data"] = self._ensure_jsonable(extra_data)
             except TokenCreationError:
                 self._logger.exception(
-                    "Falha ao validar extra_data. action=%s sub=%s",
-                    action.name,
+                    "Failed to validate extra_data. action=%s sub=%s",
+                    action_name,
                     sub_str,
                 )
                 raise
@@ -274,15 +279,15 @@ class JWTService:
             )
         except (TypeError, ValueError, jwt.InvalidKeyError) as e:
             self._logger.exception(
-                "Falha ao gerar JWT (encode). action=%s sub=%s", action.name, sub_str
+                "Failed to generate JWT (encode). action=%s sub=%s", action_name, sub_str
             )
-            raise TokenCreationError("Falha ao gerar token") from e
+            raise TokenCreationError("Failed to generate token") from e
         except Exception as e:
-            # Última barreira. Evita 500 “misterioso” sem log.
+            # Final safeguard. Avoids a mysterious 500 without logs.
             self._logger.exception(
-                "Falha inesperada ao gerar JWT. action=%s sub=%s", action.name, sub_str
+                "Unexpected failure while generating JWT. action=%s sub=%s", action_name, sub_str
             )
-            raise TokenCreationError("Falha inesperada ao gerar token") from e
+            raise TokenCreationError("Unexpected failure while generating token") from e
 
         if isinstance(token, bytes):
             token = token.decode("utf-8")
@@ -311,20 +316,21 @@ class JWTService:
     def validar(
         self, token: str, audience: Optional[Union[str, List[str]]] = None
     ) -> TokenVerificationResult:
-        """Valida um token JWT e retorna um resultado estruturado.
+        """Validate a JWT token and return a structured result.
 
         Args:
-            token (str): Token JWT a ser validado.
-            audience (Optional[Union[str, List[str]]]): Audience opcional para validar. Pode ser
-                uma string ou lista de strings. Se uma lista for fornecida, o token é válido se
-                seu audience corresponder a QUALQUER um dos valores na lista.
+            token (str): JWT token to validate.
+            audience (Optional[Union[str, List[str]]]): Optional audience to validate. It may be
+                a string or a list of strings. If a list is provided, the token is valid if its
+                audience matches ANY value in the list.
 
         Returns:
-            TokenVerificationResult: Resultado estruturado da validação contendo status, sub,
-                action, age, aud, jti, extra_data e reason.
+            TokenVerificationResult: Structured validation result containing status, sub, action,
+                age, aud, jti, extra_data, and reason. ``action`` is ``None`` when the token
+                does not include an ``action`` claim.
 
         Raises:
-            TokenValidationError: Se houver falha inesperada ao decodificar o token.
+            TokenValidationError: If an unexpected failure occurs while decoding the token.
         """
         if not isinstance(token, str) or not token.strip():
             return TokenVerificationResult(valid=False, status="invalid", reason="missing_token")
@@ -344,39 +350,45 @@ class JWTService:
                 },
             )
         except jwt.ExpiredSignatureError:
-            self._logger.info("JWT expirado")
+            self._logger.info("JWT expired")
             return TokenVerificationResult(valid=False, status="expired", reason="expired")
         except jwt.InvalidSignatureError:
-            self._logger.warning("Assinatura inválida no JWT")
+            self._logger.warning("Invalid JWT signature")
             return TokenVerificationResult(valid=False, status="invalid", reason="bad_signature")
         except jwt.ImmatureSignatureError:
-            self._logger.warning("JWT ainda não válido (nbf no futuro)")
+            self._logger.warning("JWT not valid yet (nbf in the future)")
             return TokenVerificationResult(valid=False, status="invalid", reason="immature")
         except jwt.InvalidIssuerError:
-            self._logger.warning("Issuer inválido no JWT")
+            self._logger.warning("Invalid JWT issuer")
             return TokenVerificationResult(valid=False, status="invalid", reason="invalid_issuer")
         except jwt.InvalidAudienceError:
-            self._logger.warning("Audience inválido no JWT")
+            self._logger.warning("Invalid JWT audience")
             return TokenVerificationResult(valid=False, status="invalid", reason="invalid_audience")
         except jwt.InvalidTokenError:
-            self._logger.warning("JWT inválido")
+            self._logger.warning("Invalid JWT")
             return TokenVerificationResult(valid=False, status="invalid", reason="invalid")
         except Exception as e:
-            self._logger.exception("Falha inesperada ao decodificar JWT")
-            raise TokenValidationError("Falha inesperada ao validar token") from e
+            self._logger.exception("Unexpected failure while decoding JWT")
+            raise TokenValidationError("Unexpected failure while validating token") from e
 
         sub = payload.get("sub")
         if not isinstance(sub, str) or not sub:
             return TokenVerificationResult(valid=False, status="invalid", reason="missing_sub")
 
-        action_raw = payload.get("action", "NO_ACTION")
-        if not isinstance(action_raw, str):
-            return TokenVerificationResult(valid=False, status="invalid", reason="invalid_action")
+        action_raw = payload.get("action")
+        action = None
 
-        try:
-            acao = self._action_enum[action_raw]
-        except KeyError:
-            return TokenVerificationResult(valid=False, status="invalid", reason="invalid_action")
+        if action_raw is not None:
+            if not isinstance(action_raw, str):
+                return TokenVerificationResult(
+                    valid=False, status="invalid", reason="invalid_action"
+                )
+            try:
+                action = self._action_enum[action_raw]
+            except KeyError:
+                return TokenVerificationResult(
+                    valid=False, status="invalid", reason="invalid_action"
+                )
 
         age = None
         if "iat" in payload:
@@ -414,7 +426,7 @@ class JWTService:
             valid=True,
             status="valid",
             sub=sub,
-            action=acao,
+            action=action,
             age=age,
             aud=aud if aud else None,
             jti=jti,
@@ -432,21 +444,21 @@ class JWTService:
         token: str,
         reason: Optional[str] = None,
     ) -> bool:
-        """Revoga um token JWT armazenando seu jti com TTL.
+        """Revoke a JWT token by storing its jti with a TTL.
 
         Args:
-            token (str): Token JWT a ser revogado.
-            reason (Optional[str]): Motivo opcional para a revogação.
+            token (str): JWT token to revoke.
+            reason (Optional[str]): Optional reason for the revocation.
 
         Returns:
-            bool: True se o token foi revogado com sucesso, False se não há revocation_store
-                configurado, token inválido ou expirado.
+            bool: True if the token was revoked successfully, False if no revocation_store is
+                configured, or if the token is invalid or expired.
 
         Raises:
-            TokenValidationError: Se houver falha inesperada ao decodificar o token.
+            TokenValidationError: If an unexpected failure occurs while decoding the token.
         """
         if self._revocation_store is None:
-            self._logger.warning("Revogacao solicitada sem revocation_store configurado")
+            self._logger.warning("Revocation requested without a configured revocation_store")
             return False
 
         if not isinstance(token, str) or not token.strip():
@@ -468,14 +480,14 @@ class JWTService:
                 },
             )
         except jwt.ExpiredSignatureError:
-            self._logger.info("JWT expirado (revogacao ignorada)")
+            self._logger.info("JWT expired (revocation ignored)")
             return False
         except jwt.InvalidTokenError:
-            self._logger.warning("JWT invalido (revogacao ignorada)")
+            self._logger.warning("Invalid JWT (revocation ignored)")
             return False
         except Exception as e:
-            self._logger.exception("Falha inesperada ao decodificar JWT para revogacao")
-            raise TokenValidationError("Falha inesperada ao validar token") from e
+            self._logger.exception("Unexpected failure while decoding JWT for revocation")
+            raise TokenValidationError("Unexpected failure while validating token") from e
 
         jti = payload.get("jti")
         if not isinstance(jti, str) or not jti.strip():
@@ -502,19 +514,19 @@ class JWTService:
         return self.revogar(token=token, reason=reason)
 
     def revogar_jti(self, jti: str, exp: int, reason: Optional[str] = None) -> bool:
-        """Revoga um jti conhecido usando o exp fornecido.
+        """Revoke a known jti using the provided exp.
 
         Args:
-            jti (str): Identificador único do token (JWT ID).
-            exp (int): Timestamp de expiração do token.
-            reason (Optional[str]): Motivo opcional para a revogação.
+            jti (str): Unique token identifier (JWT ID).
+            exp (int): Token expiration timestamp.
+            reason (Optional[str]): Optional reason for the revocation.
 
         Returns:
-            bool: True se o jti foi revogado com sucesso, False se não há revocation_store
-                configurado, jti inválido, ou exp já expirado.
+            bool: True if the jti was revoked successfully, False if no revocation_store is
+                configured, if jti is invalid, or if exp has already expired.
         """
         if self._revocation_store is None:
-            self._logger.warning("Revogacao solicitada sem revocation_store configurado")
+            self._logger.warning("Revocation requested without a configured revocation_store")
             return False
 
         if not isinstance(jti, str) or not jti.strip():
@@ -537,7 +549,7 @@ class JWTService:
 
 @dataclass(frozen=True)
 class TokenConfig:
-    """Configuracao do JWTService."""
+    """JWTService configuration."""
 
     secret_key: str
     algorithm: str
@@ -549,49 +561,49 @@ class TokenConfig:
 
     def __post_init__(self) -> None:
         if not isinstance(self.secret_key, str) or not self.secret_key.strip():
-            raise ValueError("SECRET_KEY deve ser uma string valida")
+            raise ValueError("SECRET_KEY must be a valid string")
 
         if not isinstance(self.algorithm, str) or not self.algorithm.strip():
-            raise ValueError("JWTSERVICE_ALGORITHM deve ser uma string valida")
+            raise ValueError("JWTSERVICE_ALGORITHM must be a valid string")
 
         if self.audience is not None:
             if not isinstance(self.audience, str) or not self.audience.strip():
-                raise ValueError("JWTSERVICE_AUDIENCE deve ser uma string não vazia")
+                raise ValueError("JWTSERVICE_AUDIENCE must be a non-empty string")
 
         if not isinstance(self.issuer, str) or not self.issuer.strip():
-            raise ValueError("JWTSERVICE_ISSUER deve ser uma string valida")
+            raise ValueError("JWTSERVICE_ISSUER must be a valid string")
 
         if not isinstance(self.leeway, int) or self.leeway < 0:
-            raise ValueError("JWTSERVICE_LEEWAY deve ser um inteiro nao negativo")
+            raise ValueError("JWTSERVICE_LEEWAY must be a non-negative integer")
 
         if (
             not isinstance(self.rate_limit_create_per_minute, int)
             or self.rate_limit_create_per_minute < 0
         ):
-            raise ValueError("JWTSERVICE_RATELIMIT_CREATE deve ser um inteiro nao negativo")
+            raise ValueError("JWTSERVICE_RATELIMIT_CREATE must be a non-negative integer")
 
         if (
             not isinstance(self.rate_limit_validate_per_minute, int)
             or self.rate_limit_validate_per_minute < 0
         ):
-            raise ValueError("JWTSERVICE_RATELIMIT_VALIDATE deve ser um inteiro nao negativo")
+            raise ValueError("JWTSERVICE_RATELIMIT_VALIDATE must be a non-negative integer")
 
-        algoritmo = self.algorithm.strip().upper()
-        object.__setattr__(self, "algorithm", algoritmo)
-        if algoritmo != "HS256":
+        normalized_algorithm = self.algorithm.strip().upper()
+        object.__setattr__(self, "algorithm", normalized_algorithm)
+        if normalized_algorithm != "HS256":
             raise ValueError(
-                "JWTSERVICE_ALGORITHM não suportado. Use HS256 (sem chaves RSA configuradas)."
+                "JWTSERVICE_ALGORITHM is not supported. Use HS256 (no RSA keys configured)."
             )
 
 
 def load_token_config_from_dict(app_config: Dict[str, Any]) -> TokenConfig:
-    """Carrega configuracoes do JWTService a partir de um dict.
+    """Load JWTService configuration from a dict.
 
     Args:
-        app_config: Dicionario de configuracao da aplicacao.
+        app_config: Application configuration dictionary.
 
     Returns:
-        TokenConfig: Configuracao validada do servico.
+        TokenConfig: Validated service configuration.
     """
     app_config.setdefault("JWTSERVICE_ALGORITHM", "HS256")
     app_config.setdefault("JWTSERVICE_ISSUER", "JWTService")

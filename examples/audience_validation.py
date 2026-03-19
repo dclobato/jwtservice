@@ -25,7 +25,7 @@ def main() -> None:
     print("=" * 60)
 
     # Create a token for the mobile app
-    token = service.criar(
+    token = service.create(
         action=JWTAction.NO_ACTION,
         sub="user@example.com",
         expires_in=3600,
@@ -37,26 +37,26 @@ def main() -> None:
 
     # Example 1: Validate with exact match (single string)
     print("\n2. Validating with single audience 'mobile-app' (exact match)")
-    result = service.validar(token, audience="mobile-app")
+    result = service.validate(token, audience="mobile-app")
     print(f"   Valid: {result.valid}")
     print(f"   Audience: {result.aud}")
 
     # Example 2: Validate with wrong audience (single string)
     print("\n3. Validating with single audience 'web-app' (no match)")
-    result = service.validar(token, audience="web-app")
+    result = service.validate(token, audience="web-app")
     print(f"   Valid: {result.valid}")
     print(f"   Reason: {result.reason}")
 
     # Example 3: Validate with list containing the audience
     print("\n4. Validating with list ['web-app', 'mobile-app', 'admin-panel']")
-    result = service.validar(token, audience=["web-app", "mobile-app", "admin-panel"])
+    result = service.validate(token, audience=["web-app", "mobile-app", "admin-panel"])
     print(f"   Valid: {result.valid}")
     print(f"   Audience: {result.aud}")
     print(f"   ✓ Token is valid because 'mobile-app' is in the list")
 
     # Example 4: Validate with list NOT containing the audience
     print("\n5. Validating with list ['web-app', 'admin-panel']")
-    result = service.validar(token, audience=["web-app", "admin-panel"])
+    result = service.validate(token, audience=["web-app", "admin-panel"])
     print(f"   Valid: {result.valid}")
     print(f"   Reason: {result.reason}")
     print(f"   ✗ Token is invalid because 'mobile-app' is NOT in the list")
@@ -64,11 +64,11 @@ def main() -> None:
     # Example 5: Token without audience, validated without audience
     print("\n" + "=" * 60)
     print("6. Token created without audience")
-    token_no_aud = service.criar(
+    token_no_aud = service.create(
         sub="user@example.com",
         expires_in=3600,
     )
-    result = service.validar(token_no_aud)
+    result = service.validate(token_no_aud)
     print(f"   Valid: {result.valid}")
     print(f"   Audience: {result.aud}")
 
@@ -86,18 +86,18 @@ def main() -> None:
     service_with_aud = JWTService(config=config_with_aud, logger=logger)
 
     # Token will automatically get the config audience
-    token_default = service_with_aud.criar(
+    token_default = service_with_aud.create(
         sub="user@example.com",
         expires_in=3600,
     )
     print(f"   Token created with default audience from config")
 
-    result = service_with_aud.validar(token_default)
+    result = service_with_aud.validate(token_default)
     print(f"   Valid: {result.valid}")
     print(f"   Audience: {result.aud}")
 
     # Can still validate with list of audiences
-    result = service_with_aud.validar(token_default, audience=["api-service", "backup-service"])
+    result = service_with_aud.validate(token_default, audience=["api-service", "backup-service"])
     print(f"   Valid with list ['api-service', 'backup-service']: {result.valid}")
 
     print("\n" + "=" * 60)

@@ -25,11 +25,11 @@ def run_in_memory_example() -> None:
     store = InMemoryRevocationStore()
     service = build_service(store)
 
-    token = service.criar(sub="user@example.com")
-    print("Before revoke:", service.validar(token).status)
+    token = service.create(sub="user@example.com")
+    print("Before revoke:", service.validate(token).status)
 
-    service.revogar(token, reason="logout")
-    print("After revoke:", service.validar(token).status)
+    service.revoke(token, reason="logout")
+    print("After revoke:", service.validate(token).status)
 
 
 def run_sqlite_example() -> None:
@@ -37,11 +37,11 @@ def run_sqlite_example() -> None:
     with SQLiteRevocationStore("revocations.db") as store:
         service = build_service(store)
 
-        token = service.criar(sub="user@example.com")
-        print("Before revoke:", service.validar(token).status)
+        token = service.create(sub="user@example.com")
+        print("Before revoke:", service.validate(token).status)
 
-        service.revogar(token, reason="incident")
-        print("After revoke:", service.validar(token).status)
+        service.revoke(token, reason="incident")
+        print("After revoke:", service.validate(token).status)
 
 
 if __name__ == "__main__":

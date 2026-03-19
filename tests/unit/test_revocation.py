@@ -69,14 +69,14 @@ def test_sqlite_context_manager(tmp_path) -> None:
 
 
 def test_sqlite_creates_directory_if_not_exists(tmp_path) -> None:
-    """Testa que o SQLiteRevocationStore cria o diretorio se nao existir."""
+    """Test that SQLiteRevocationStore creates the directory if it does not exist."""
     nested_dir = tmp_path / "nested" / "path" / "to" / "db"
     db_path = nested_dir / "revocations.db"
 
-    # Diretorio nao existe ainda
+    # Directory does not exist yet.
     assert not nested_dir.exists()
 
-    # Criar store deve criar o diretorio
+    # Creating the store should create the directory.
     store = SQLiteRevocationStore(str(db_path))
     try:
         assert nested_dir.exists()
@@ -88,7 +88,7 @@ def test_sqlite_creates_directory_if_not_exists(tmp_path) -> None:
 
 
 def test_sqlite_works_with_existing_directory(tmp_path) -> None:
-    """Testa que funciona quando o diretorio ja existe."""
+    """Test that it works when the directory already exists."""
     db_dir = tmp_path / "existing_dir"
     db_dir.mkdir()
     db_path = db_dir / "revocations.db"
@@ -102,52 +102,52 @@ def test_sqlite_works_with_existing_directory(tmp_path) -> None:
 
 
 def test_sqlite_works_with_existing_database(tmp_path) -> None:
-    """Testa que funciona quando o arquivo de banco ja existe."""
+    """Test that it works when the database file already exists."""
     db_path = tmp_path / "revocations.db"
 
-    # Criar primeira instancia
+    # Create the first instance.
     store1 = SQLiteRevocationStore(str(db_path))
     try:
         assert store1.revoke("token-1", ttl_seconds=10) is True
     finally:
         store1.close()
 
-    # Arquivo deve existir agora
+    # File should exist now.
     assert db_path.exists()
 
-    # Criar segunda instancia com o mesmo arquivo
+    # Create a second instance using the same file.
     store2 = SQLiteRevocationStore(str(db_path))
     try:
-        # Deve conseguir ler o token revogado anteriormente
+        # It should be able to read the previously revoked token.
         assert store2.is_revoked("token-1") is True
     finally:
         store2.close()
 
 
 def test_sqlite_fails_if_path_is_file_not_directory(tmp_path) -> None:
-    """Testa que falha se o caminho do diretorio e um arquivo."""
-    # Criar um arquivo onde deveria ser um diretorio
+    """Test that it fails if the directory path is a file."""
+    # Create a file where a directory should be.
     file_path = tmp_path / "file.txt"
-    file_path.write_text("conteudo")
+    file_path.write_text("content")
 
     db_path = file_path / "revocations.db"
 
-    with pytest.raises(ValueError, match="nao e um diretorio"):
+    with pytest.raises(ValueError, match="is not a directory"):
         SQLiteRevocationStore(str(db_path))
 
 
 def test_sqlite_fails_if_file_in_middle_of_path(tmp_path) -> None:
-    """Testa que falha se um arquivo esta no meio do caminho do diretorio."""
-    # Criar estrutura: /dir1/dir2/rogue_file onde rogue_file e um arquivo
+    """Test that it fails if a file exists in the middle of the directory path."""
+    # Create structure: /dir1/dir2/rogue_file where rogue_file is a file.
     dir1 = tmp_path / "dir1"
     dir2 = dir1 / "dir2"
     dir2.mkdir(parents=True)
 
     rogue_file = dir2 / "rogue_file"
-    rogue_file.write_text("conteudo")
+    rogue_file.write_text("content")
 
-    # Tentar criar banco em /dir1/dir2/rogue_file/dir3/revocations.db
+    # Try to create a database at /dir1/dir2/rogue_file/dir3/revocations.db.
     db_path = rogue_file / "dir3" / "revocations.db"
 
-    with pytest.raises(ValueError, match="Nao foi possivel criar o diretorio"):
+    with pytest.raises(ValueError, match="Could not create directory"):
         SQLiteRevocationStore(str(db_path))
