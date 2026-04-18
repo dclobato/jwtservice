@@ -195,6 +195,25 @@ def test_expired_token_returns_reason(config, logger) -> None:
     assert result.reason == "expired"
 
 
+def test_validate_token_with_expiry_returns_expires_in(config, logger) -> None:
+    service = JWTService(config=config, logger=logger)
+    token = service.criar(sub="user@example.com", expires_in=300)
+    result = service.validate(token)
+
+    assert result.valid is True
+    assert result.expires_in is not None
+    assert 1 <= result.expires_in <= 300
+
+
+def test_validate_token_without_expiry_returns_none_expires_in(config, logger) -> None:
+    service = JWTService(config=config, logger=logger)
+    token = service.criar(sub="user@example.com", expires_in=0)
+    result = service.validate(token)
+
+    assert result.valid is True
+    assert result.expires_in is None
+
+
 def test_invalid_action_returns_reason(config, logger) -> None:
     now = int(time.time())
     payload = {

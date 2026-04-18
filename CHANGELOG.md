@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 - TBD
 
+## [2.1.0]
+- Add `expires_in` field to `TokenVerificationResult` reporting seconds until token expiration
+- `expires_in` is `None` when the token carries no `exp` claim
+
 ## [2.0.0]
 - BREAKING: `JWTService.criar`/`JWTService.create` no longer inject an `action` claim when no
   action is provided
@@ -25,7 +29,8 @@ All notable changes to this project will be documented in this file.
 ## [0.1.0]
 - Initial release
 
-[Unreleased]: https://github.com/dclobato/jwtservice/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/dclobato/jwtservice/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/dclobato/jwtservice/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/dclobato/jwtservice/releases/tag/v2.0.0
 [1.0.2]: https://github.com/dclobato/jwtservice/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/dclobato/jwtservice/releases/tag/v1.0.1

@@ -61,6 +61,7 @@ class TokenVerificationResult:
     sub: Optional[str] = None
     action: Optional[Enum] = None
     age: Optional[int] = None
+    expires_in: Optional[int] = None
     aud: Optional[str] = None
     extra_data: Optional[Dict[Any, Any]] = None
     reason: Optional[str] = None
@@ -326,8 +327,9 @@ class JWTService:
 
         Returns:
             TokenVerificationResult: Structured validation result containing status, sub, action,
-                age, aud, jti, extra_data, and reason. ``action`` is ``None`` when the token
-                does not include an ``action`` claim.
+                age, expires_in, aud, jti, extra_data, and reason. ``action`` is ``None`` when
+                the token does not include an ``action`` claim. ``expires_in`` is the number of
+                seconds until expiration, or ``None`` if the token has no ``exp`` claim.
 
         Raises:
             TokenValidationError: If an unexpected failure occurs while decoding the token.
@@ -399,6 +401,10 @@ class JWTService:
             if age < 0:
                 return TokenVerificationResult(valid=False, status="invalid", reason="invalid_iat")
 
+        expires_in = None
+        if "exp" in payload:
+            expires_in = int(payload["exp"]) - self._get_now()
+
         extra_data = payload.get("extra_data")
         if extra_data is not None and not isinstance(extra_data, dict):
             return TokenVerificationResult(
@@ -428,6 +434,7 @@ class JWTService:
             sub=sub,
             action=action,
             age=age,
+            expires_in=expires_in,
             aud=aud if aud else None,
             jti=jti,
             extra_data=extra_data,
